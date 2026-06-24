@@ -1,0 +1,8 @@
+- [games schema drift vs drizzle push](games-schema-drift.md) — never run drizzle push on this repo's live Neon DB; it would drop un-modeled columns. Use ALTER TABLE via executeSql.
+- [Auth accepts plaintext passwords](auth-plaintext-passwords.md) — login compares plaintext when stored value isn't bcrypt; batch-inserted/seeded users need unique unguessable passwords or they're loginable.
+- [Viber events & edition model](viber-events-edition-model.md) — events map to integer `edition`; FIFA World Cup is its own event at edition 0 (≠ Viber 4); team names recur across editions so they don't identify an event.
+- [auth architecture](auth-architecture.md) — custom session system (not an integration); add OAuth providers by mirroring the manual Discord flow; cookie flags/state are intentional, don't harden unilaterally.
+- [event participation & payment model](event-participation-model.md) — per-event roles in event_participations; competitor join still mutates global user row by design; entry-fee gated server-side; Stripe verify must bind session metadata.
+- [dashboard team projection](dashboard-team-projection.md) — dashboardTeams is a name-keyed live projection of platform rosters; rename the dashboard row before sync to keep colour/rank/shields; no manual seed/add/delete.
+- [unlayered CSS beats Tailwind utilities](index-css-unlayered-overrides.md) — append must-win design-system rules unlayered at end of index.css to override `uppercase`/`tracking`/`transition` utilities; never combine `.reveal`+`.lift`.
+- [two design systems](two-design-systems.md) — `/` (LandingPage→landing.css, Bricolage/Inter) is separate from the rest of the app (index.css); "match the home page" = edit index.css tokens, not landing.css.
