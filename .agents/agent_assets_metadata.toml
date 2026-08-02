@@ -1,0 +1,103 @@
+uploads = []
+
+[[generated]]
+id = "W07pLhy1FyJHmpVjqy8J8"
+uri = "file://client/src/assets/images/home-hero.png"
+type = "image"
+title = "Competitive coding arena"
+
+[[generated]]
+id = "MlVMWykuv3dnp-CBPsmUd"
+uri = "file://public/winners/viber-4-banner.png"
+type = "image"
+title = "Viber 4 China banner"
+
+[[generated]]
+id = "lOy2u5UnfOvio4k7toBWZ"
+uri = "file://public/winners/viber-3-banner.png"
+type = "image"
+title = "Viber 3 Halloween banner"
+
+[[generated]]
+id = "4mj9X1vg7bBxred67Dbnn"
+uri = "file://public/winners/viber-2-banner.png"
+type = "image"
+title = "Viber 2 retro banner"
+
+[[generated]]
+id = "RPk4IYwLO_zv7FhDrqU1h"
+uri = "file://public/winners/viber-1-banner.png"
+type = "image"
+title = "Viber 1 sperm racer banner"
+
+[[generated]]
+id = "EbamxhutmBPEWGbM88T3q"
+uri = "file://public/winners/fifa-banner.png"
+type = "image"
+title = "FIFA World Cup banner"
+
+[[outputs]]
+id = "0ySpFXrl-MsTBtjm-xMZb"
+uri = "file://Viber5_Competitors_Roster.xlsx"
+type = "table"
+title = "Viber 5 Competitors Roster"
+
+[[outputs]]
+id = "ot0kBxVzBcZ4JYHuavLOY"
+uri = "file://exports/Viber5_Competitors.xlsx"
+type = "table"
+title = "Viber 5 Competitors"
+
+[[outputs]]
+id = "JbYUNGiPcm4Yf0F12cVVR"
+uri = "file://exports/Viber5_Competitors_Updated.csv"
+type = "table"
+title = "Viber 5 Competitors (34 total)"
+
+[[outputs]]
+id = "HyfVuuH4zJImMRfa9rDrl"
+uri = "file://viber_all_participants.csv"
+type = "table"
+title = "Viber All Participants (184 users)"
+
+[[outputs]]
+id = "svSQk1AV1Fss2vJQaQQn5"
+uri = "file://viber_participants_unified.csv"
+type = "table"
+title = "Viber All Participants — Unified (single row per person)"
+
+[[outputs]]
+id = "cT4R6yZWedj7t7tfNxKqS"
+uri = "file://viber_participants_full.csv"
+type = "table"
+title = "Viber All Participants — Full Unified CSV (184 people, single row each)"
+
+[[outputs]]
+id = "bxZpP04S-02JrCgVsymjE"
+uri = "file://viber_competition_results.csv"
+type = "table"
+title = "Viber Competition Results (12 winner records across all editions)"
+
+[[outputs]]
+id = "6JJmEyt2kDw-ICTRVt2lO"
+uri = "file://viber_participants_enriched.csv"
+type = "table"
+title = "Participants Enriched (184 rows with app placements linked by team)"
+
+[[outputs]]
+id = "pjJGDm70WIaK5TaP7paEI"
+uri = "file://viber_all_apps_complete.csv"
+type = "table"
+title = "All 112 Apps Complete (with ratings, rankings, URLs)"
+
+[[outputs]]
+id = "VMNoS0GIhb5gXFS7VKzjv"
+uri = "file://viber_competition_results_complete.csv"
+type = "table"
+title = "Competition Results Complete (112 apps with official winner flags)"
+
+[[outputs]]
+id = "gbYfiia91u9nFIeL6EJvG"
+uri = "file://viber_competition_results_corrected.csv"
+type = "table"
+title = "Corrected Competition Results (112 apps from live database)"

@@ -1,0 +1,14 @@
+- [games schema drift vs drizzle push](games-schema-drift.md) — never run drizzle push on this repo's live Neon DB; it would drop un-modeled columns. Use ALTER TABLE via executeSql.
+- [Auth accepts plaintext passwords](auth-plaintext-passwords.md) — login compares plaintext when stored value isn't bcrypt; batch-inserted/seeded users need unique unguessable passwords or they're loginable.
+- [Viber events & edition model](viber-events-edition-model.md) — events map to integer `edition`; FIFA World Cup is its own event at edition 0 (≠ Viber 4); team names recur across editions so they don't identify an event.
+- [auth architecture](auth-architecture.md) — custom session system (not an integration); add OAuth providers by mirroring the manual Discord flow; cookie flags/state are intentional, don't harden unilaterally.
+- [event participation & payment model](event-participation-model.md) — per-event roles in event_participations; competitor join still mutates global user row by design; entry-fee gated server-side; Stripe verify must bind session metadata.
+- [dashboard team projection](dashboard-team-projection.md) — dashboardTeams is a name-keyed live projection of platform rosters; rename the dashboard row before sync to keep colour/rank/shields; no manual seed/add/delete.
+- [unlayered CSS beats Tailwind utilities](index-css-unlayered-overrides.md) — append must-win design-system rules unlayered at end of index.css to override `uppercase`/`tracking`/`transition` utilities; never combine `.reveal`+`.lift`.
+- [two design systems](two-design-systems.md) — `/` (LandingPage→landing.css, Bricolage/Inter) is separate from the rest of the app (index.css); "match the home page" = edit index.css tokens, not landing.css.
+- [non-ISO event currency](currency-non-iso.md) — event currency can be crypto (e.g. usdc); Intl currency formatting throws RangeError → blank/dark page. Always try/catch fee formatting.
+- [CompetitorGuard hook-order black screen](competitor-guard-hooks.md) — a conditional hook after the guard's public-route early return crashes the app to black on navigation; all hooks must run first.
+- [public builder profile policy](public-builder-profiles.md) — /builders/:handle is competitor-only + opt-out 404; list endpoints must ship profilePublic so names only link when public.
+- [Autoscale cost controls](autoscale-cost-controls.md) — user has $20/mo budget; WS hides on hidden tabs, polls ≥15s by design. Never reintroduce always-on connections or fast polling.
+- [Live dashboard event linkage](dashboard-event-linkage.md) — arena roster comes from linked event participations (fallback edition users); reset=clock only, restart=clean+running; wheel reads /api/dashboard teams.
+- [GitHub push to viberventures](github-push-viberventures.md) — remote is kwesi-strydom/viberventures; snapshot merged (never rebase/force); agent gitPush auth intermittent; pane rebase/LFS can wedge git.

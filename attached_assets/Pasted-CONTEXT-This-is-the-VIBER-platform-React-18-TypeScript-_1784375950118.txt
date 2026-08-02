@@ -1,0 +1,36 @@
+CONTEXT
+This is the VIBER platform (React 18 + TypeScript + Vite frontend in /client, Express + Drizzle ORM + Neon Postgres in /server, shared schema in /shared/schema.ts). VIBER 5 is a live vibe-coding competition on July 24: 32 competitors will be randomly assigned into 16 teams of 2, live at the event. Competitors already exist as users (userType competitor, edition 5) with name, email, country, flag, shirtSize, avatarUrl. There is an existing teams table, admin endpoints (assign-teams, rotate-members, swap-members), a TeamRandomizerPage, and a games table for app submissions.
+
+DO NOT touch: authentication, the ratings/leaderboard system, the admin dashboard timer logic, or any existing V4 data. Use polling only — no websockets or SSE anywhere.
+
+BUILD, in this order:
+
+1. SCHEMA (shared/schema.ts + migration):
+   - users: add twitter (text), instagram (text), tagline (text, one line)
+   - games: add teamId (integer, nullable, references teams.id)
+
+2. COMPETITOR PROFILE PAGE:
+   - After login, competitors land on /me/profile (this replaces the waiting-room lock-in as the default home).
+   - Editable: avatar photo (existing /api/me/avatar), tagline, twitter, instagram. Read-only: name, country, flag, editions.
+   - Show "My competitions": VIBER 5 (joined) linking to /v5/waiting-room.
+   - Nag banner until twitter OR instagram is filled (handles are required for competitors).
+   - Public view at /competitors/:username showing the same card (photo, name, flag, tagline, socials, "V5 COMPETITOR" badge). Dark neon style consistent with the existing site.
+
+3. WAITING ROOM v2 at /v5/waiting-room:
+   - Free navigation (competitors can leave and return anytime — never trap them).
+   - Grid of all edition-5 competitor cards (photo, name, flag, tagline).
+   - Countdown to July 24, 19:00 Asia/Kuala_Lumpur.
+   - Poll GET /api/my-team every 8 seconds. When the response contains a team for the current user, transition to the TEAM REVEAL.
+
+4. TEAM REVEAL + TEAM DASHBOARD:
+   - Reveal: full-screen moment showing my photo + my teammate's photo, team number, team name. One "Enter team dashboard" button.
+   - Team dashboard at /v5/my-team: teammate card (photo, name, flag, socials), team number/name, and APP UPLOAD.
+   - App upload: one game row per team for edition 5 (keyed by teamId). Either team member can create it or edit it — editing updates the same row, never creates a duplicate. Fields: title, description (one line), game_url, thumbnail_url.
+
+5. ADMIN:
+   - "Lock roster + run assignment" action: pairs all onboarded edition-5 competitors randomly into teams of 2 (if odd count, one team of 3), writes teams + user team links, so the polling clients pick it up.
+   - "Export assignment JSON" button: downloads [{teamNumber, teamName, members:[{name, avatarUrl, flag}]}] for the on-screen animation.
+
+ACCEPTANCE:
+- A competitor can log in, complete their profile, sit in the waiting room, get revealed into a team within 10s of admin running assignment, and upload an app as a team — on mobile.
+- Running assignment twice (reset + rerun) must not leave orphan teams or duplicate game rows.
