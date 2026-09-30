@@ -1,3 +1,4 @@
+import { Navigate } from 'react-router-dom';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -77,6 +78,8 @@ const EventDetailPage = () => {
     queryKey: ['/api/me/dashboard'],
     enabled: !!user,
   });
+
+  if (slug === 'viber-astana' || slug === 'viber-5' || event?.edition === 5) return <Navigate to="/astana" replace />;
 
   if (isLoading || !event) {
     return (

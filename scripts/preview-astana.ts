@@ -1,0 +1,30 @@
+// Local-only rehearsal: ephemeral PostgreSQL, synthetic builders, local admin.
+// Never imported by the production server. Binds exclusively to loopback.
+import express from 'express';
+import cookieParser from 'cookie-parser';
+import { PGlite } from '@electric-sql/pglite';
+import { readFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { WebSocketServer } from 'ws';
+import path from 'node:path';
+import {AstanaStore} from '../server/astana/store';
+import {createAstanaRouter} from '../server/astana/routes';
+if(process.env.NODE_ENV==='production')throw new Error('Preview is development-only.');
+const pg=new PGlite();
+await pg.exec(`CREATE TABLE events(id serial primary key,edition integer unique,name text,slug text unique,description text,location text,status text,start_date timestamptz,entry_fee_cents integer,currency text); CREATE TABLE users(id serial primary key,edition integer); CREATE TABLE games(id serial primary key,edition integer); INSERT INTO events(edition,name,slug) VALUES(5,'Viber 5','viber-5');`);
+await pg.exec(await readFile(new URL('./astana.sql',import.meta.url),'utf8'));
+const store=new AstanaStore({query:async(sql,values=[]) => (await pg.query(sql,values)).rows as any[],transaction:fn=>pg.transaction(async tx=>fn({query:async(sql,values=[]) => (await tx.query(sql,values)).rows as any[]}))});
+for(let i=1;i<=5;i++)await store.join({name:`Demo Builder ${i}`,email:`demo${i}@example.com`,followConfirmed:true},null);
+const app=express();app.use(express.json());app.use(cookieParser());
+app.get('/api/auth/user',(_req,res)=>res.json({user:{id:'1',name:'Local rehearsal admin',email:'demo@example.com',userType:'spectator',isAdmin:true}}));
+app.get('/api/admin/users',(_req,res)=>res.json([]));
+app.use('/api/astana',createAstanaRouter({store,requireAdmin:(_req,_res,next)=>next(),broadcast:()=>{}}));
+const event={id:1,status:'idle',durationSeconds:3600,accumulatedSeconds:0,startedAt:null as string|null,linkedEventId:2,updatedAt:new Date().toISOString()};
+const challenges:any[]=[];
+app.get('/api/dashboard',async(_req,res)=>{const teams=await store.getTeams();res.json({event,teams:teams.map((t,i)=>({id:i+1,name:t.name,color:'#f9ce32',rank:null,shields:0,sortOrder:i})),events:challenges,feed:[],linkedEvent:await store.getEvent(),astanaTeams:teams});});
+app.post('/api/admin/dashboard/event',(req,res)=>{if(req.body.action==='start'){event.status='running';event.startedAt=new Date().toISOString();}if(req.body.action==='pause'){event.status='paused';}res.json(event);});
+app.post('/api/admin/dashboard/calamity',(req,res)=>{for(const name of req.body.teamNames)challenges.push({id:crypto.randomUUID(),teamName:name,type:req.body.type,label:req.body.label,category:'challenge',active:true,atSeconds:600,createdAt:new Date().toISOString()});res.json(challenges);});
+app.use('/api',(_req,res)=>res.json([]));
+app.use(express.static(path.resolve('dist/public')));app.get('*',(_req,res)=>res.sendFile(path.resolve('dist/public/index.html')));
+const server=createServer(app);new WebSocketServer({server,path:'/ws'});
+server.listen(4173,'127.0.0.1',()=>console.log('Local rehearsal only: http://127.0.0.1:4173/astana — synthetic data; no live database.'));

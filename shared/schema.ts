@@ -290,6 +290,7 @@ export type FeedEvent = typeof feedEvents.$inferSelect;
 export type InsertFeedEvent = z.infer<typeof insertFeedEventSchema>;
 
 export interface DashboardSnapshot {
+  astanaTeams?: import("./astana").EventTeam[];
   event: EventState;
   teams: DashboardTeam[];
   events: DashboardEvent[];
@@ -297,3 +298,38 @@ export interface DashboardSnapshot {
   // The competition currently powering the arena (roster source).
   linkedEvent: { id: number; name: string; edition: number } | null;
 }
+
+// Astana guest identities deliberately do not authenticate legacy user accounts.
+// Constraints and indexes are installed additively by scripts/astana.sql.
+export const astanaTeams = pgTable('astana_teams', {
+  id: uuid('id').primaryKey(), eventId: integer('event_id').notNull().references(() => events.id), name: text('name').notNull(),
+});
+export const astanaGuests = pgTable('astana_guests', {
+  id: uuid('id').primaryKey(), eventId: integer('event_id').notNull().references(() => events.id),
+  name: text('name').notNull(), email: text('email').notNull(), teamId: uuid('team_id').references(() => astanaTeams.id),
+  followedAt: timestamp('followed_at', {withTimezone:true}).notNull().defaultNow(),
+});
+export const astanaSessions = pgTable('astana_sessions', {
+  tokenHash: text('token_hash').primaryKey(), guestId: uuid('guest_id').notNull().references(() => astanaGuests.id),
+  expiresAt: timestamp('expires_at', {withTimezone:true}).notNull(),
+});
+export const astanaRecoveryTokens = pgTable('astana_recovery_tokens', {
+  tokenHash: text('token_hash').primaryKey(), guestId: uuid('guest_id').notNull().references(() => astanaGuests.id),
+  expiresAt: timestamp('expires_at', {withTimezone:true}).notNull(), consumedAt: timestamp('consumed_at', {withTimezone:true}),
+});
+export const astanaEventState = pgTable('astana_event_state', {
+  eventId: integer('event_id').primaryKey().references(() => events.id), rosterRevision: integer('roster_revision').notNull().default(0), judgingRevision: integer('judging_revision').notNull().default(0),
+});
+export const astanaProjects = pgTable('astana_projects', {
+  id: uuid('id').primaryKey(), eventId: integer('event_id').notNull().references(() => events.id),
+  teamId: uuid('team_id').notNull().unique().references(() => astanaTeams.id), title: text('title').notNull(), description: text('description').notNull().default(''),
+  appUrl: text('app_url').notNull(), thumbnailUrl: text('thumbnail_url').notNull(), socialUrl: text('social_url'), revision: integer('revision').notNull().default(1),
+  createdAt: timestamp('created_at',{withTimezone:true}).notNull().defaultNow(), updatedAt: timestamp('updated_at',{withTimezone:true}).notNull().defaultNow(),
+});
+export const astanaVisitors = pgTable('astana_visitors', {tokenHash:text('token_hash').primaryKey(), expiresAt:timestamp('expires_at',{withTimezone:true}).notNull()});
+export const astanaRatings = pgTable('astana_ratings', {
+  projectId:uuid('project_id').notNull().references(()=>astanaProjects.id), visitorHash:text('visitor_hash').notNull().references(()=>astanaVisitors.tokenHash), rating:integer('rating').notNull(),
+});
+export const astanaWinners = pgTable('astana_winners', {
+  eventId:integer('event_id').notNull().references(()=>events.id), rank:integer('rank').notNull(), projectId:uuid('project_id').notNull().references(()=>astanaProjects.id), stage:text('stage').notNull(),
+});

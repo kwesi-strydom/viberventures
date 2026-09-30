@@ -250,7 +250,7 @@ const AdminPage = () => {
   const spectators = users.filter(u => u.userType === 'spectator');
 
   return (
-    <div className="arena-wrap py-10">
+    <div className="arena-wrap py-10"><a href="/admin/astana" className="btn btn-primary mb-6">Run Viber Astana</a>
       <div className="flex items-center gap-3 mb-8">
         <Shield className="h-8 w-8 text-primary" />
         <h1 className="h1 text-primary">Admin</h1>

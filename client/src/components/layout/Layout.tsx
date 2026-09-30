@@ -11,7 +11,7 @@ const HIDE_NAV_ROUTES = ['/', '/admin/team-randomizer', '/admin/wheel-of-destiny
 
 const Layout = ({ children }: LayoutProps) => {
   const location = useLocation();
-  const hideNav = HIDE_NAV_ROUTES.includes(location.pathname);
+  const hideNav = HIDE_NAV_ROUTES.includes(location.pathname) || location.pathname.startsWith('/astana') || location.pathname === '/admin/astana';
   const hideFooter = hideNav || location.pathname.startsWith('/team/');
 
   return (
