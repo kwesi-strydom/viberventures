@@ -69,7 +69,7 @@ const Navbar = () => {
             Workshops
           </NavLink>
           <NavLink to="/launchpad" className={navItemClass}>
-            Founders track
+            Launchpad
           </NavLink>
           {user?.isAdmin && (
             <NavLink to="/leaderboard" className={navItemClass}>
@@ -167,7 +167,7 @@ const Navbar = () => {
               className="btn btn-ghost w-full justify-center text-lg"
               onClick={() => setIsMenuOpen(false)}
             >
-              Founders track
+              Launchpad
             </NavLink>
             {isAuthenticated && (
               <NavLink 

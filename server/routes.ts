@@ -1119,6 +1119,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const event = await storage.getEventBySlug(req.params.slug.toLowerCase());
       if (!event) return res.status(404).json({ message: "Event not found" });
+      if (event.edition === 5) return res.status(410).json({ message: "Viber V5 was canceled. Existing registrations are retained. Check in separately for Viber Astana.", redirect: "/astana/join" });
       if (event.status === "past") {
         return res.status(400).json({ message: "This event has already ended" });
       }
@@ -1183,6 +1184,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const event = await storage.getEventBySlug(req.params.slug.toLowerCase());
       if (!event) return res.status(404).json({ message: "Event not found" });
+      if (event.edition === 5) return res.status(410).json({ message: "Viber V5 was canceled. Existing registrations are retained. Check in separately for Viber Astana.", redirect: "/astana/join" });
       const participation = await storage.getParticipation(req.user.id, event.id);
       if (!participation || participation.role !== "competitor") {
         return res.status(400).json({ message: "Join as a competitor first" });
@@ -1274,6 +1276,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!txHash) return res.status(400).json({ message: "Transaction hash is required" });
       const event = await storage.getEventBySlug(req.params.slug.toLowerCase());
       if (!event) return res.status(404).json({ message: "Event not found" });
+      if (event.edition === 5) return res.status(410).json({ message: "Viber V5 was canceled. Existing registrations are retained. Check in separately for Viber Astana.", redirect: "/astana/join" });
       const participation = await storage.getParticipation(req.user.id, event.id);
       if (!participation || participation.role !== "competitor") {
         return res.status(400).json({ message: "Join as a competitor first" });

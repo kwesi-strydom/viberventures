@@ -168,3 +168,23 @@ test('switching arena rosters preserves previous team IDs, ranks, colors and shi
  const astana=await sync(['Astana Team 1']);assert.equal(astana.length,1);assert.equal(rows.length,2);
  const restored=await sync(['Team 1']);assert.deepEqual(restored,[old]);assert.equal(restored[0].shields,4);assert.equal(restored[0].id,1);
 });
+
+test('canceled V5 registrations and payments survive Astana setup without enrollment', async () => {
+ const pg = new PGlite();
+ try {
+  await pg.exec(`CREATE TABLE events(id serial primary key,edition integer unique,name text,slug text unique,description text,location text,status text,start_date timestamptz,entry_fee_cents integer,currency text);
+   CREATE TABLE users(id serial primary key,edition integer,email text);
+   CREATE TABLE games(id serial primary key,edition integer);
+   CREATE TABLE event_participations(id serial primary key,user_id integer,event_id integer,payment_status text,payment_ref text);
+   INSERT INTO events(edition,name,slug) VALUES(5,'Viber 5','viber-5');
+   INSERT INTO users VALUES(42,5,'v5@example.com');
+   INSERT INTO event_participations VALUES(7,42,1,'paid','preserved-payment');`);
+  const beforeUsers = (await pg.query('SELECT * FROM users')).rows;
+  const beforePayments = (await pg.query('SELECT * FROM event_participations')).rows;
+  const migration = await readFile(new URL('../../scripts/astana.sql', import.meta.url),'utf8');
+  await pg.exec(migration); await pg.exec(migration);
+  assert.deepEqual((await pg.query('SELECT * FROM users')).rows,beforeUsers);
+  assert.deepEqual((await pg.query('SELECT * FROM event_participations')).rows,beforePayments);
+  assert.equal((await pg.query('SELECT * FROM astana_guests')).rows.length,0);
+ } finally { await pg.close(); }
+});

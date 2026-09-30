@@ -65,10 +65,10 @@ const EventsPage = () => {
 
   const all = events || [];
   const upcoming = all
-    .filter((e) => e.status === 'upcoming' || e.status === 'live')
+    .filter((e) => e.edition !== 5 && (e.status === 'upcoming' || e.status === 'live'))
     .sort((a, b) => b.edition - a.edition);
   const past = all
-    .filter((e) => e.status === 'past')
+    .filter((e) => e.edition !== 5 && e.status === 'past')
     .sort((a, b) => {
       // Sort by startDate descending (most recent first). Events without a
       // date (e.g. special editions) sort to the top so they stay visible.
@@ -142,6 +142,8 @@ const EventsPage = () => {
           </div>
         )}
       </section>
+
+      {all.some((event) => event.edition === 5) && <p className="mb-8 text-muted-foreground">Viber V5 was canceled. Existing registrations are retained; Astana requires a separate free check-in. <Link className="text-primary underline" to="/astana">Explore Viber Astana →</Link></p>}
 
       {/* Past competitions */}
       {past.length > 0 && (

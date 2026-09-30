@@ -10,7 +10,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, useSearchParams, useNavigate, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useSearchParams, useNavigate, useLocation } from "react-router-dom";
 import Layout from "./components/layout/Layout";
 import LandingPage from "./pages/LandingPage";
 import HomePage from "./pages/HomePage";
@@ -187,15 +187,18 @@ const App = () => {
                   <Route path="/events/:slug" element={<EventDetailPage />} />
                   <Route path="/competition/:slug" element={<EventDetailPage />} />
                   <Route path="/workshops" element={<WorkshopsPage />} />
-                  <Route path="/launchpad" element={<LaunchpadPage />} />
+                  <Route path="/launchpad/archive" element={<LaunchpadPage />} />
+                  <Route path="/v5" element={<Navigate to="/astana" replace />} />
+                  <Route path="/v5/join" element={<Navigate to="/astana/join" replace />} />
+                  <Route path="/launchpad" element={<Navigate to="/astana/launchpad" replace />} />
                   <Route path="/onboarding" element={<OnboardingPage />} />
                   <Route path="/my-team" element={<MyTeamPage />} />
                   <Route path="/team/:slug" element={<TeamPage />} />
                   <Route path="/team/:slug/edit/:gameId" element={<TeamEditGamePage />} />
                   <Route path="/team/:slug/settings" element={<TeamSettingsPage />} />
                   <Route path="/me/profile" element={<CompetitorProfilePage />} />
-                  <Route path="/v5/waiting-room" element={<WaitingRoomPage />} />
-                  <Route path="/v5/my-team" element={<TeamDashboardPage />} />
+                  <Route path="/v5/waiting-room" element={<Navigate to="/astana/team" replace />} />
+                  <Route path="/v5/my-team" element={<Navigate to="/astana/team" replace />} />
                   <Route path="/competitors/:id" element={<CompetitorPublicPage />} />
                   <Route path="/builders/:handle" element={<BuilderProfilePage />} />
                   <Route path="*" element={<NotFound />} />

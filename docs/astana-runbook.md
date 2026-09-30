@@ -62,9 +62,17 @@ Redeploy the previous app version and remove Astana navigation if necessary. Lea
 
 ## Verification record
 
-- Eight automated cases run against ephemeral PostgreSQL and HTTP routes; all pass.
+- Nine automated cases run against ephemeral PostgreSQL and HTTP routes; all pass.
 - TypeScript check and production build pass (Vite reports the existing large-bundle advisory).
 - Independent review completed; fixed late-arrival New team, stale roster selections, and historical arena projection preservation with regression tests.
 - Browser rehearsal verified registration, three teams, a two-member swap, submission with social link, voting, private draft and public top-three reveal. Participant form inspected at 390×844.
 - Physical phone QR scanning, live Neon transport/cookies, and hosting rollout require deployment verification. No production migration was performed during development.
 - Minor retained behavior: with only one team in a wheel draw, the legacy result copy mentions a swap, but no swap dialog opens and no membership changes.
+
+## Canceled V5 and navigation
+
+Astana replaces canceled V5 promotions on the homepage. The main `/launchpad` opens Astana; the previous founders-track page remains at `/launchpad/archive`, and past apps remain at `/games`. V5 event detail links lead to the Astana hub, and `/v5/waiting-room` and `/v5/my-team` lead to the Astana team page. Astana has a Back to Viber link. The catalog labels V5 canceled instead of promoting registration.
+
+V5 users, event participations, and payment records are retained without being copied to Astana. Existing admin participant tools remain available. New V5 event joins and checkout/crypto submissions are rejected; historical payment verification is preserved. No database change is needed for this navigation update. A regression test runs the Astana migration twice with V5 participant/payment fixtures and checks they remain identical and no Astana guests are created.
+
+The homepage shows the confirmed date and venue rather than a countdown to an unconfirmed start time. External NS event pages and previously issued third-party payment links are not modified by this app change.

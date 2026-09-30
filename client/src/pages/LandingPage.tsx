@@ -82,36 +82,6 @@ const LandingPage = () => {
     el.querySelectorAll('.reveal').forEach((node) => io.observe(node));
     cleanups.push(() => io.disconnect());
 
-    // Countdown to V5
-    const target = new Date('2026-07-24T18:00:00+08:00').getTime();
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const elD = el.querySelector('#cdD');
-    const elH = el.querySelector('#cdH');
-    const elM = el.querySelector('#cdM');
-    const elS = el.querySelector('#cdS');
-    const badge = el.querySelector('#cdBadge');
-    let interval: ReturnType<typeof setInterval> | undefined;
-    if (elD && elH && elM && elS) {
-      const tick = () => {
-        const diff = target - Date.now();
-        if (diff <= 0) {
-          elD.textContent = '00';
-          elH.textContent = '00';
-          elM.textContent = '00';
-          elS.textContent = '00';
-          if (badge) badge.textContent = 'Live now';
-          return;
-        }
-        elD.textContent = pad(Math.floor(diff / 86400000));
-        elH.textContent = pad(Math.floor((diff % 86400000) / 3600000));
-        elM.textContent = pad(Math.floor((diff % 3600000) / 60000));
-        elS.textContent = pad(Math.floor((diff % 60000) / 1000));
-      };
-      tick();
-      interval = setInterval(tick, 1000);
-      cleanups.push(() => clearInterval(interval));
-    }
-
     // Stat count-up
     const rafIds = new Set<number>();
     const cio = new IntersectionObserver(

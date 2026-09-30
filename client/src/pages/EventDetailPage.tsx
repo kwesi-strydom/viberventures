@@ -79,7 +79,7 @@ const EventDetailPage = () => {
     enabled: !!user,
   });
 
-  if (slug === 'viber-astana') return <Navigate to="/astana" replace />;
+  if (slug === 'viber-astana' || slug === 'viber-5' || event?.edition === 5) return <Navigate to="/astana" replace />;
 
   if (isLoading || !event) {
     return (
