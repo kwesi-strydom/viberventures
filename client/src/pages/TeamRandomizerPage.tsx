@@ -6,6 +6,7 @@ import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
 import type { User } from '@shared/schema';
 import { CURRENT_EDITION } from '@shared/schema';
+import TeamRevealStage from '@/components/team/TeamRevealStage';
 
 type SafeUser = Omit<User, 'password'>;
 
@@ -147,95 +148,30 @@ const TeamRandomizerPage = () => {
       </div>
 
       <div className="flex-1 flex flex-col items-center justify-center w-full max-w-[1400px] mx-auto relative z-10">
-        {phase === 'idle' && (
-          <div className="w-full">
-            {competitors.length === 0 ? (
-              <div className="text-center text-muted-foreground py-20">
-                <Users className="h-16 w-16 mx-auto mb-6 opacity-20" />
-                <p className="mono-label">No onboarded builders for Viber {CURRENT_EDITION} yet. Once competitors finish onboarding for this session, they'll appear here.</p>
-              </div>
-            ) : (
-              <div className="flex flex-wrap justify-center gap-4 max-w-5xl mx-auto">
-                {competitors.map(c => (
-                  <div key={c.id} className="flex flex-col items-center gap-3 px-6 py-4 rounded-xl bg-card border border-border text-foreground">
-                    {c.discordAvatar ? (
-                      <img src={`https://cdn.discordapp.com/avatars/${c.discordId}/${c.discordAvatar}.png?size=64`} className="h-14 w-14 rounded-md object-cover" alt="" />
-                    ) : (
-                      <div className="h-14 w-14 rounded-md bg-background border border-border flex items-center justify-center text-xl font-bold font-mono">{c.name[0]}</div>
-                    )}
-                    <span className="font-bold text-sm tracking-wide">{c.name}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+        {phase === 'idle' && competitors.length === 0 && (
+          <div className="text-center text-muted-foreground py-20">
+            <Users className="h-16 w-16 mx-auto mb-6 opacity-20" />
+            <p className="mono-label">No onboarded builders for Viber {CURRENT_EDITION} yet. Once competitors finish onboarding for this session, they'll appear here.</p>
           </div>
         )}
-
-        {phase === 'spinning' && (
-          <div className="flex flex-wrap justify-center gap-4 max-w-5xl mx-auto">
-            {competitors.map(c => {
-              const isSpinning = spinningCards.includes(c.id);
-              return (
-                <div key={c.id}
-                  className="flex flex-col items-center gap-3 px-6 py-4 rounded-xl border transition-all duration-100"
-                  style={{
-                    borderColor: isSpinning ? 'var(--accent)' : 'var(--ink-600)',
-                    backgroundColor: isSpinning ? 'var(--accent)' : 'var(--ink-700)',
-                    color: isSpinning ? 'var(--accent-ink)' : 'var(--ink-100)',
-                    transform: isSpinning ? `translateY(${Math.random() > 0.5 ? -6 : 6}px) scale(1.08)` : 'none',
-                    boxShadow: isSpinning ? '0 0 40px var(--accent-soft)' : 'none',
-                  }}>
-                  {c.discordAvatar ? (
-                    <img src={`https://cdn.discordapp.com/avatars/${c.discordId}/${c.discordAvatar}.png?size=64`} className="h-14 w-14 rounded-md object-cover" alt="" />
-                  ) : (
-                    <div className="h-14 w-14 rounded-md flex items-center justify-center text-xl font-bold font-mono" style={{ backgroundColor: isSpinning ? 'var(--accent-ink)' : 'var(--ink-900)', color: isSpinning ? 'var(--accent)' : 'var(--ink-100)' }}>{c.name[0]}</div>
-                  )}
-                  <span className="font-bold text-sm tracking-wide">{c.name}</span>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {phase === 'revealed' && (
-          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 w-full">
-            {teams.map((team, i) => {
-              const isVisible = revealedTeams.includes(i);
-              return (
-                <div key={i}
-                  className="card transition-all duration-500 flex flex-col"
-                  style={{
-                    borderColor: isVisible ? 'var(--accent)' : 'var(--ink-600)',
-                    backgroundColor: isVisible ? 'var(--ink-850)' : 'var(--ink-700)',
-                    boxShadow: isVisible ? '0 0 40px var(--accent-soft)' : 'none',
-                    opacity: isVisible ? 1 : 0,
-                    transform: isVisible ? 'translateY(0) scale(1)' : 'translateY(40px) scale(0.9)',
-                  }}>
-                  <div className="mono-label text-center mb-6" style={{ color: isVisible ? 'var(--accent)' : 'var(--ink-300)' }}>
-                    Team <span className="num text-xl">{i + 1}</span>
-                  </div>
-                  <div className="flex flex-col gap-5 flex-1 justify-center">
-                    {team.map(member => (
-                      <div key={member.id} className="flex items-center gap-4 bg-background p-3 rounded-lg border border-border">
-                        {member.discordAvatar ? (
-                          <img src={`https://cdn.discordapp.com/avatars/${member.discordId}/${member.discordAvatar}.png?size=128`} className="h-12 w-12 rounded-md object-cover" alt="" />
-                        ) : (
-                          <div className="h-12 w-12 rounded-md bg-card border border-border flex items-center justify-center text-xl font-bold font-mono">
-                            {member.name[0]}
-                          </div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="text-foreground font-bold truncate">{member.name}</div>
-                          {member.discordUsername && <div className="text-muted-foreground text-xs font-mono truncate">@{member.discordUsername}</div>}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+        {(phase !== 'idle' || competitors.length > 0) && <TeamRevealStage
+          phase={phase}
+          builders={competitors.map(c => ({
+            id: c.id, name: c.name,
+            avatarUrl: c.discordId && c.discordAvatar ? `https://cdn.discordapp.com/avatars/${c.discordId}/${c.discordAvatar}.png?size=128` : null,
+            subtitle: c.discordUsername ? `@${c.discordUsername}` : null,
+          }))}
+          teams={teams.map((team, i) => ({
+            name: `Team ${i + 1}`,
+            builders: team.map(c => ({
+              id: c.id, name: c.name,
+              avatarUrl: c.discordId && c.discordAvatar ? `https://cdn.discordapp.com/avatars/${c.discordId}/${c.discordAvatar}.png?size=128` : null,
+              subtitle: c.discordUsername ? `@${c.discordUsername}` : null,
+            })),
+          }))}
+          spinningIds={spinningCards}
+          revealedTeams={revealedTeams}
+        />}
       </div>
     </div>
   );

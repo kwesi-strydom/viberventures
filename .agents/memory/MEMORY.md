@@ -12,3 +12,5 @@
 - [Autoscale cost controls](autoscale-cost-controls.md) — user has $20/mo budget; WS hides on hidden tabs, polls ≥15s by design. Never reintroduce always-on connections or fast polling.
 - [Live dashboard event linkage](dashboard-event-linkage.md) — arena roster comes from linked event participations (fallback edition users); reset=clock only, restart=clean+running; wheel reads /api/dashboard teams.
 - [GitHub history alignment](github-push-viberventures.md) — remote main has a clean snapshot lineage; compare trees and back up old local history before syncing.
+- [Astana team reveal](astana-team-reveal.md) — animate builder cards, but only reveal teams returned by Astana's successful server-side draw.
+- [Astana rating parity](astana-rating-parity.md) — show VIBER-style half-star averages, but submit only whole-number Astana votes.
