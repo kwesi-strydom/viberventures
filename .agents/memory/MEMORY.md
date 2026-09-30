@@ -1,4 +1,4 @@
-- [games schema drift vs drizzle push](games-schema-drift.md) — never run drizzle push on this repo's live Neon DB; it would drop un-modeled columns. Use ALTER TABLE via executeSql.
+- [Live Neon schema safety](games-schema-drift.md) — external Neon is shared by editor and published site; verify target and use additive migrations, never db:push.
 - [Auth accepts plaintext passwords](auth-plaintext-passwords.md) — login compares plaintext when stored value isn't bcrypt; batch-inserted/seeded users need unique unguessable passwords or they're loginable.
 - [Viber events & edition model](viber-events-edition-model.md) — events map to integer `edition`; FIFA World Cup is its own event at edition 0 (≠ Viber 4); team names recur across editions so they don't identify an event.
 - [auth architecture](auth-architecture.md) — custom session system (not an integration); add OAuth providers by mirroring the manual Discord flow; cookie flags/state are intentional, don't harden unilaterally.
@@ -11,4 +11,4 @@
 - [public builder profile policy](public-builder-profiles.md) — /builders/:handle is competitor-only + opt-out 404; list endpoints must ship profilePublic so names only link when public.
 - [Autoscale cost controls](autoscale-cost-controls.md) — user has $20/mo budget; WS hides on hidden tabs, polls ≥15s by design. Never reintroduce always-on connections or fast polling.
 - [Live dashboard event linkage](dashboard-event-linkage.md) — arena roster comes from linked event participations (fallback edition users); reset=clock only, restart=clean+running; wheel reads /api/dashboard teams.
-- [GitHub push to viberventures](github-push-viberventures.md) — remote is kwesi-strydom/viberventures; snapshot merged (never rebase/force); agent gitPush auth intermittent; pane rebase/LFS can wedge git.
+- [GitHub history alignment](github-push-viberventures.md) — remote main has a clean snapshot lineage; compare trees and back up old local history before syncing.
