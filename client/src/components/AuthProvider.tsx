@@ -13,6 +13,7 @@ interface User {
   avatarUrl?: string | null;
   discordAvatar?: string | null;
   edition?: number;
+  profilePublic?: boolean | null;
 }
 
 interface AuthContextType {

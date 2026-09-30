@@ -128,7 +128,7 @@ const CompetitorProfilePage = () => {
   const saveProfile = async () => {
     setSaving(true);
     try {
-      await apiRequest('/api/me/profile', {
+      const updated = await apiRequest('/api/me/profile', {
         method: 'PATCH',
         body: JSON.stringify({
           tagline: tagline.trim() || null,
@@ -138,6 +138,7 @@ const CompetitorProfilePage = () => {
           profilePublic,
         }),
       });
+      login(updated);
       queryClient.invalidateQueries({ queryKey: ['/api/me/dashboard'] });
       toast({ title: 'Profile saved' });
     } catch {

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/components/AuthProvider';
 import { CURRENT_EDITION } from '@shared/schema';
 import { teamNameToSlug } from '@/lib/teamUtils';
+import BuilderNames from '@/components/games/BuilderNames';
 
 const LeaderboardPage = () => {
   const { user } = useAuth();
@@ -135,6 +136,7 @@ const LeaderboardPage = () => {
                         Team {game.creator}
                       </Link>
                     )}
+                    <BuilderNames builders={game.builders} />
                   </div>
                 </div>
                 

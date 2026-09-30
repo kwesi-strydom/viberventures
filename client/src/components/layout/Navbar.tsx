@@ -105,7 +105,7 @@ const Navbar = () => {
                       <LayoutDashboard size={14} className="text-primary" />
                       My Dashboard
                     </Link>
-                    {user?.userType === 'competitor' && (user?.edition ?? 0) >= 5 && (
+                    {user?.userType === 'competitor' && (user?.edition ?? 0) >= 5 && user.profilePublic !== false && (
                       <Link
                         to={`/builders/${user?.username || user?.id}`}
                         onClick={() => setIsUserMenuOpen(false)}
@@ -179,7 +179,7 @@ const Navbar = () => {
                 My Dashboard
               </NavLink>
             )}
-            {isAuthenticated && user?.userType === 'competitor' && (user?.edition ?? 0) >= 5 && (
+            {isAuthenticated && user?.userType === 'competitor' && (user?.edition ?? 0) >= 5 && user.profilePublic !== false && (
               <NavLink 
                 to={`/builders/${user?.username || user?.id}`}
                 className="btn btn-ghost w-full justify-center text-lg"

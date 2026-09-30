@@ -10,6 +10,7 @@ export interface Game {
   rating_count: number;
   creator?: string | null;
   edition?: number | null;
+  builders?: { id: number; name: string; username?: string | null; profilePublic: boolean }[];
 }
 
 export type GameFormData = Omit<Game, "id" | "created_at" | "avg_rating" | "rating_count">;

@@ -10,7 +10,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate, useSearchParams, useNavigate, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useSearchParams, useNavigate, useLocation, useParams } from "react-router-dom";
 import Layout from "./components/layout/Layout";
 import LandingPage from "./pages/LandingPage";
 import HomePage from "./pages/HomePage";
@@ -43,7 +43,6 @@ import TeamSettingsPage from "./pages/TeamSettingsPage";
 import CompetitorProfilePage from "./pages/CompetitorProfilePage";
 import WaitingRoomPage from "./pages/WaitingRoomPage";
 import TeamDashboardPage from "./pages/TeamDashboardPage";
-import CompetitorPublicPage from "./pages/CompetitorPublicPage";
 import BuilderProfilePage from "./pages/BuilderProfilePage";
 import NotFound from "./pages/NotFound";
 import { AuthProvider } from "./components/AuthProvider";
@@ -58,6 +57,11 @@ const ScrollToTop = () => {
     window.scrollTo(0, 0);
   }, [pathname]);
   return null;
+};
+
+const LegacyBuilderRedirect = () => {
+  const { id } = useParams<{ id: string }>();
+  return <Navigate to={`/builders/${encodeURIComponent(id || '')}`} replace />;
 };
 
 const NSErrorDialog = () => {
@@ -199,7 +203,7 @@ const App = () => {
                   <Route path="/me/profile" element={<CompetitorProfilePage />} />
                   <Route path="/v5/waiting-room" element={<Navigate to="/astana/team" replace />} />
                   <Route path="/v5/my-team" element={<Navigate to="/astana/team" replace />} />
-                  <Route path="/competitors/:id" element={<CompetitorPublicPage />} />
+                   <Route path="/competitors/:id" element={<LegacyBuilderRedirect />} />
                   <Route path="/builders/:handle" element={<BuilderProfilePage />} />
                   <Route path="*" element={<NotFound />} />
                 </Routes>

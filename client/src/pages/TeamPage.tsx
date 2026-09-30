@@ -17,6 +17,9 @@ import { apiRequest } from "@/lib/queryClient";
 interface TeamMember {
   id: number;
   name: string;
+  username?: string | null;
+  profilePublic?: boolean | null;
+  edition?: number | null;
   discordId?: string;
   discordUsername?: string;
   discordAvatar?: string;
@@ -186,7 +189,11 @@ const TeamPage = () => {
                   </div>
                 )}
                 <div>
-                  <p className="font-bold leading-none text-foreground">{member.name}</p>
+                  {member.userType === 'competitor' && (member.edition ?? 0) >= 5 && member.profilePublic !== false ? (
+                    <Link to={`/builders/${encodeURIComponent(member.username || String(member.id))}`} className="font-bold leading-none text-foreground hover:text-primary hover:underline">
+                      {member.name}
+                    </Link>
+                  ) : <p className="font-bold leading-none text-foreground">{member.name}</p>}
                   {member.discordUsername && (
                     <p className="text-muted-foreground small mt-1">@{member.discordUsername}</p>
                   )}

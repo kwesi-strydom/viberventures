@@ -1,11 +1,12 @@
 import { useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Loader2, Trophy, Star, Calendar, Upload, Compass, Users, Shuffle, AtSign, Hash, Linkedin, Pencil, Globe, ExternalLink } from 'lucide-react';
+import { Loader2, Trophy, Star, Calendar, Upload, Compass, Users, Shuffle, AtSign, Hash, Linkedin, Pencil, Globe } from 'lucide-react';
 import { useAuth } from '@/components/AuthProvider';
 import { useToast } from '@/hooks/use-toast';
 import { apiRequest, queryClient } from '@/lib/queryClient';
 import Countdown from '@/components/Countdown';
+import ViberRecord from '@/components/profile/ViberRecord';
 
 interface EventInfo {
   id: number;
@@ -72,10 +73,12 @@ const RoleBadge = ({ role }: { role: string }) => (
   </span>
 );
 
-const resultLabel = (rank: number) => {
-  if (rank === 1) return { label: 'Champion', cls: 'border-[#f9a826]/40 text-[#f9a826] bg-[#f9a826]/10' };
-  if (rank <= 4) return { label: 'Finalist', cls: 'border-primary/40 text-primary bg-primary/10' };
-  return { label: 'Competed', cls: 'border-border text-muted-foreground bg-white/5' };
+const linkedinUrl = (value: string) => {
+  const handle = value.trim()
+    .replace(/^https?:\/\/(www\.)?linkedin\.com\/in\//i, '')
+    .replace(/^(www\.)?linkedin\.com\/in\//i, '')
+    .replace(/^@/, '').split(/[/?#]/)[0];
+  return `https://www.linkedin.com/in/${encodeURIComponent(handle)}`;
 };
 
 // Resize an image file down to a small square data URL for avatar storage.
@@ -130,6 +133,7 @@ const MePage = () => {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [switchingId, setSwitchingId] = useState<number | null>(null);
+  const [savingVisibility, setSavingVisibility] = useState(false);
 
   const switchToCompetitor = async (slug: string, participationId: number) => {
     setSwitchingId(participationId);
@@ -175,6 +179,24 @@ const MePage = () => {
   const entries = data?.participations || [];
 
   const onPick = () => fileRef.current?.click();
+
+  const toggleVisibility = async () => {
+    if (!data?.user) return;
+    setSavingVisibility(true);
+    try {
+      const updated = await apiRequest('/api/me/profile', {
+        method: 'PATCH',
+        body: JSON.stringify({ profilePublic: data.user.profilePublic === false }),
+      });
+      login(updated);
+      await queryClient.invalidateQueries({ queryKey: ['/api/me/dashboard'] });
+      toast({ title: updated.profilePublic === false ? 'Public profile hidden' : 'Public profile visible' });
+    } catch {
+      toast({ title: 'Could not update visibility', variant: 'destructive' });
+    } finally {
+      setSavingVisibility(false);
+    }
+  };
 
   const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -240,9 +262,9 @@ const MePage = () => {
               </a>
             )}
             {data?.user.linkedin && (
-              <span className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border text-xs text-primary">
+              <a href={linkedinUrl(data.user.linkedin)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border text-xs text-primary hover:border-primary/40">
                 <Linkedin size={12} /> LinkedIn
-              </span>
+              </a>
             )}
             <Link to="/me/profile" className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border text-xs text-muted-foreground hover:text-foreground hover:border-primary/40 transition">
               <Pencil size={12} /> Edit profile
@@ -253,6 +275,15 @@ const MePage = () => {
               </Link>
             )}
           </div>
+          <div className="mt-4 flex items-center justify-center sm:justify-start gap-3 text-sm text-muted-foreground">
+            <span>Public builder profile</span>
+            <button type="button" role="switch" aria-label="Public builder profile" aria-checked={data?.user.profilePublic !== false}
+              disabled={savingVisibility} onClick={toggleVisibility}
+              className={`relative h-6 w-11 rounded-full transition-colors disabled:opacity-50 ${data?.user.profilePublic === false ? 'bg-border' : 'bg-primary'}`}>
+              <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-background transition-transform ${data?.user.profilePublic === false ? 'translate-x-0.5' : 'translate-x-[22px]'}`} />
+            </button>
+            <span>{data?.user.profilePublic === false ? 'Hidden' : 'Visible'}</span>
+          </div>
         </div>
         <Link to="/events" className="btn btn-primary btn-lg">
           <Compass size={16} className="mr-2" />
@@ -260,66 +291,9 @@ const MePage = () => {
         </Link>
       </div>
 
-      {/* My VIBER record */}
-      {entries.some(e => e.event?.status === 'past' && e.participation.role === 'competitor') && (
-        <div className="mb-10">
-          <h2 className="h3 uppercase mb-4">My Viber record</h2>
-          <div className="grid gap-4">
-            {entries
-              .filter(e => e.event?.status === 'past' && e.participation.role === 'competitor')
-              .sort((a, b) => (b.event?.edition ?? 0) - (a.event?.edition ?? 0))
-              .map(({ participation, event, result }) => {
-                const badge = result ? resultLabel(result.rank) : null;
-                return (
-                  <div key={participation.id} className="card p-5">
-                    <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                      <div className="flex-1">
-                        <div className="flex flex-wrap items-center gap-2 mb-1">
-                          <Link to={`/events/${event!.slug}`} className="h3 uppercase hover:text-primary transition-colors">
-                            {event!.name}
-                          </Link>
-                          <RoleBadge role={participation.role} />
-                          {badge && (
-                            <span className={`text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded border ${badge.cls}`}>
-                              {badge.label}
-                            </span>
-                          )}
-                        </div>
-                        {participation.teamName && (
-                          <p className="text-sm text-muted-foreground">Team {participation.teamName}</p>
-                        )}
-                        {result && (
-                          <div className="flex items-center gap-4 mt-2 text-sm">
-                            <span className="inline-flex items-center gap-1 text-[#f9a826]">
-                              <Trophy size={14} /> #{result.rank}
-                            </span>
-                            <span className="inline-flex items-center gap-1 text-primary">
-                              <Star size={14} /> {result.avg_rating.toFixed(1)} ({result.rating_count} votes)
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                      {result && (
-                        <div className="sm:w-44 shrink-0">
-                          {result.thumbnail_url && (
-                            <img src={result.thumbnail_url} alt={result.title} className="w-full h-24 object-cover rounded-md border border-border mb-2" />
-                          )}
-                          {result.game_url ? (
-                            <a href={result.game_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
-                              {result.title} <ExternalLink size={12} />
-                            </a>
-                          ) : (
-                            <span className="text-sm text-foreground">{result.title}</span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-          </div>
-        </div>
-      )}
+      <ViberRecord title="My Viber record" entries={entries.map(({ participation, event, result }) => ({
+        role: participation.role, teamName: participation.teamName, event, result,
+      }))} />
 
       {/* Events */}
       <h2 className="h3 uppercase mb-4">My events</h2>

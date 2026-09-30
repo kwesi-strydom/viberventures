@@ -18,7 +18,7 @@ interface MyTeamUser {
 // Routes everyone (including not-yet-onboarded competitors) may always view.
 const PUBLIC_PATHS = ['/', '/welcome', '/launchpad', '/launchpad/archive', '/dashboard', '/roster', '/winners', '/me', '/games', '/leaderboard'];
 // Path prefixes everyone may always view (e.g. event detail pages).
-const PUBLIC_PREFIXES = ['/astana', '/events', '/competition', '/competitors', '/v5', '/winners'];
+const PUBLIC_PREFIXES = ['/astana', '/events', '/competition', '/competitors', '/builders', '/me', '/v5', '/winners'];
 
 const CompetitorGuard = ({ children }: CompetitorGuardProps) => {
   const { user, isLoading: authLoading } = useAuth();

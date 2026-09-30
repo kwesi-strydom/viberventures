@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 
 interface User {
   id: string;
+  username?: string | null;
   name: string;
   email: string;
   userType: 'competitor' | 'spectator';
@@ -11,6 +12,7 @@ interface User {
   avatarUrl?: string | null;
   discordAvatar?: string | null;
   edition?: number;
+  profilePublic?: boolean | null;
 }
 
 export const useAuthState = () => {

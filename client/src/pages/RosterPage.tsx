@@ -19,6 +19,8 @@ const EDITION_LABELS: Record<number, string> = {
 interface Competitor {
   id: number;
   name: string;
+  username?: string | null;
+  profilePublic?: boolean;
   country: string | null;
   teamName: string | null;
   discordUsername: string | null;
@@ -53,26 +55,21 @@ const CompetitorCard = ({ c }: { c: Competitor }) => {
         )}
       </div>
       <div className="min-w-0">
-        <div className="font-bold truncate">{c.name}</div>
+        {c.profilePublic ? (
+          <Link to={`/builders/${encodeURIComponent(c.username || String(c.id))}`} className="font-bold block truncate hover:text-primary hover:underline">{c.name}</Link>
+        ) : <div className="font-bold truncate">{c.name}</div>}
         <div className="mono-label truncate">
           {c.country ? `${countryFlag(c.country)} ${c.country}` : '-'}
         </div>
         {c.teamName && (
-          <div className="text-xs text-primary font-bold uppercase tracking-wide mt-1">
+          <Link to={`/team/${teamNameToSlug(c.teamName)}`} className="block text-xs text-primary font-bold uppercase tracking-wide mt-1 hover:underline">
             {c.teamName}
-          </div>
+          </Link>
         )}
       </div>
     </div>
   );
 
-  if (c.teamName) {
-    return (
-      <Link to={`/team/${teamNameToSlug(c.teamName)}`} className="block h-full">
-        {card}
-      </Link>
-    );
-  }
   return card;
 };
 

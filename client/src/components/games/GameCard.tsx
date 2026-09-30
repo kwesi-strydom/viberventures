@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Star, StarHalf } from 'lucide-react';
 import { Game } from '@/types';
+import BuilderNames from './BuilderNames';
 
 function teamNameToSlug(name: string): string {
   return name.toLowerCase().replace(/^team\s+/i, '').replace(/\s+/g, '-');
@@ -143,6 +144,7 @@ const GameCard = ({ game, onRate, isRating = false, userRating, showUserRating =
               TEAM {game.creator}
             </Link>
           )}
+          <BuilderNames builders={game.builders} />
         </div>
         
         <p className="text-sm text-ink-200 leading-relaxed line-clamp-2 mb-6 flex-grow">

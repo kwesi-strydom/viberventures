@@ -188,12 +188,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .map(u => ({
           id: u.id,
           name: u.name,
+          username: u.profilePublic !== false && edition >= CURRENT_EDITION ? u.username : null,
+          profilePublic: u.profilePublic !== false && edition >= CURRENT_EDITION,
           country: u.country,
           teamName: u.teamName,
-          discordUsername: u.discordUsername,
-          avatarUrl: u.avatarUrl || (u.discordId && u.discordAvatar
+          discordUsername: u.profilePublic !== false ? u.discordUsername : null,
+          avatarUrl: u.profilePublic !== false ? (u.avatarUrl || (u.discordId && u.discordAvatar
             ? `https://cdn.discordapp.com/avatars/${u.discordId}/${u.discordAvatar}.png?size=64`
-            : null),
+            : null)) : null,
         }))
         .sort((a, b) => {
           const ta = parseInt((a.teamName ?? "").replace(/\D/g, "")) || 0;
@@ -1619,7 +1621,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return teamNameToSlug(u.teamName) === slug;
     });
     if (members.length === 0 && !teamRecord) return res.status(404).json({ message: "Team not found" });
-    const safe = members.map(({ password: _, ...u }) => u);
+    const safe = members.map(u => {
+      const visible = u.userType === "competitor" && u.profilePublic !== false && (u.edition ?? 0) >= CURRENT_EDITION;
+      return {
+        id: u.id,
+        name: u.name,
+        username: visible ? u.username : null,
+        userType: u.userType,
+        edition: u.edition,
+        profilePublic: visible,
+        country: u.country,
+        flag: u.flag,
+        teamName: u.teamName,
+        discordId: visible ? u.discordId : null,
+        discordAvatar: visible ? u.discordAvatar : null,
+        discordUsername: visible ? u.discordUsername : null,
+        avatarUrl: visible ? u.avatarUrl : null,
+        tagline: visible ? u.tagline : null,
+        twitter: visible ? u.twitter : null,
+        instagram: visible ? u.instagram : null,
+      };
+    });
     // Use teams table for canonical name when available, else derive from members
     const teamName = teamRecord?.name ?? members[0]?.teamName ?? slug;
     res.json({ slug, teamName, members: safe, nameChanged: teamRecord?.nameChanged ?? false });
@@ -1762,7 +1784,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/games", async (req, res) => {
     try {
       const games = await storage.getAllGames();
-      res.json(games);
+      const users = await storage.getAllUsers();
+      const editions = [...new Set(games.map(game => game.edition).filter((edition): edition is number => edition != null))];
+      const rosters = new Map<number, Awaited<ReturnType<typeof storage.getParticipationsByEvent>>>();
+      await Promise.all(editions.map(async edition => {
+        const event = await storage.getEventByEdition(edition);
+        if (event) rosters.set(edition, await storage.getParticipationsByEvent(event.id));
+      }));
+      const usersById = new Map(users.map(user => [user.id, user]));
+      res.json(games.map(game => {
+        const slug = game.creator ? teamNameToSlug(game.creator) : null;
+        const participants = slug && game.edition != null
+          ? (rosters.get(game.edition) || [])
+            .filter(p => p.role === "competitor" && p.teamName && teamNameToSlug(p.teamName) === slug)
+            .map(p => usersById.get(p.userId))
+            .filter((user): user is (typeof users)[number] => !!user)
+          : [];
+        const builders = [...new Map([...participants, ...users.filter(user =>
+          slug && user.userType === "competitor" && user.edition === game.edition &&
+          user.teamName && teamNameToSlug(user.teamName) === slug
+        )].map(user => [user.id, user] as const)).values()];
+        return {
+          ...game,
+          builders: builders.map(user => {
+            const profilePublic = user.userType === "competitor" && user.profilePublic !== false &&
+              (user.edition ?? 0) >= CURRENT_EDITION;
+            return {
+              id: user.id,
+              name: user.name,
+              username: profilePublic ? user.username : null,
+              profilePublic,
+            };
+          }),
+        };
+      }));
     } catch (error) {
       console.error("Error fetching games:", error);
       res.status(500).json({ error: "Failed to fetch games" });
@@ -2060,11 +2115,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { tagline, twitter, instagram, linkedin, profilePublic } = req.body ?? {};
       const updates: any = {};
-      if (tagline !== undefined) updates.tagline = String(tagline).slice(0, 120) || null;
-      if (twitter !== undefined) updates.twitter = String(twitter).slice(0, 60) || null;
-      if (instagram !== undefined) updates.instagram = String(instagram).slice(0, 60) || null;
-      if (linkedin !== undefined) updates.linkedin = String(linkedin).slice(0, 120) || null;
-      if (profilePublic !== undefined) updates.profilePublic = !!profilePublic;
+      for (const [key, max] of [["tagline", 120], ["twitter", 60], ["instagram", 60], ["linkedin", 120]] as const) {
+        const value = { tagline, twitter, instagram, linkedin }[key];
+        if (value === undefined) continue;
+        if (value !== null && typeof value !== "string") return res.status(400).json({ message: `Invalid ${key}` });
+        updates[key] = value?.trim().slice(0, max) || null;
+      }
+      if (profilePublic !== undefined) {
+        if (typeof profilePublic !== "boolean") return res.status(400).json({ message: "Invalid profile visibility" });
+        updates.profilePublic = profilePublic;
+      }
       const updated = await storage.updateUser(req.user.id, updates);
       const { password: _pw, ...safe } = updated;
       res.json(safe);
@@ -2076,31 +2136,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Public competitor profile (safe fields only)
   app.get("/api/competitors/:id", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      if (!id) return res.status(400).json({ message: "Invalid ID" });
-      const user = await storage.getUser(id);
-      if (!user || user.userType !== "competitor") return res.status(404).json({ message: "Competitor not found" });
-      const avatar = user.avatarUrl
-        || (user.discordId && user.discordAvatar
-          ? `https://cdn.discordapp.com/avatars/${user.discordId}/${user.discordAvatar}.png?size=256`
-          : null);
-      res.json({
-        id: user.id,
-        name: user.name,
-        country: user.country,
-        flag: user.flag,
-        tagline: user.tagline,
-        twitter: user.twitter,
-        instagram: user.instagram,
-        avatarUrl: avatar,
-        edition: user.edition,
-        teamName: user.teamName,
-      });
-    } catch (err) {
-      console.error("competitor profile error:", err);
-      res.status(500).json({ message: "Failed to load profile" });
-    }
+    if (!/^[1-9]\d*$/.test(req.params.id)) return res.status(404).json({ message: "Competitor not found" });
+    res.redirect(307, `/api/builders/${req.params.id}`);
   });
 
   // Public builder profile page: safe fields + per-edition Viber record.
@@ -2187,21 +2224,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const competitors = allUsers
         .filter(u => u.userType === "competitor" && u.edition === CURRENT_EDITION)
         .map(u => {
-          const avatar = u.avatarUrl
+          const visible = u.profilePublic !== false;
+          const avatar = visible ? (u.avatarUrl
             || (u.discordId && u.discordAvatar
               ? `https://cdn.discordapp.com/avatars/${u.discordId}/${u.discordAvatar}.png?size=256`
-              : null);
+              : null)) : null;
           return {
             id: u.id,
+            username: visible ? u.username : null,
             name: u.name,
             country: u.country,
             flag: u.flag,
-            tagline: u.tagline,
-            twitter: u.twitter,
-            instagram: u.instagram,
+            tagline: visible ? u.tagline : null,
+            twitter: visible ? u.twitter : null,
+            instagram: visible ? u.instagram : null,
             avatarUrl: avatar,
             teamName: u.teamName,
-            profilePublic: u.profilePublic !== false,
+            profilePublic: visible,
           };
         })
         .sort((a, b) => (a.name || "").localeCompare(b.name || ""));

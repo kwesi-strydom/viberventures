@@ -6,6 +6,7 @@ import { useAuth } from '@/components/AuthProvider';
 
 interface CompetitorCard {
   id: number;
+  username?: string | null;
   name: string;
   country?: string | null;
   flag?: string | null;
@@ -112,7 +113,7 @@ const WaitingRoomPage = () => {
               </>
             );
             return c.profilePublic !== false ? (
-              <Link key={c.id} to={`/builders/${c.id}`} className="card p-4 hover:border-primary/40 transition group">
+               <Link key={c.id} to={`/builders/${encodeURIComponent(c.username || String(c.id))}`} className="card p-4 hover:border-primary/40 transition group">
                 {inner}
               </Link>
             ) : (

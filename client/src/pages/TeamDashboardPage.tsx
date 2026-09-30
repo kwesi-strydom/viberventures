@@ -9,6 +9,10 @@ import { apiRequest, queryClient } from '@/lib/queryClient';
 interface Teammate {
   id: number;
   name: string;
+  username?: string | null;
+  userType?: string;
+  edition?: number | null;
+  profilePublic?: boolean | null;
   country?: string | null;
   flag?: string | null;
   tagline?: string | null;
@@ -147,8 +151,8 @@ const TeamDashboardPage = () => {
 
       {/* Teammate cards */}
       <div className="grid sm:grid-cols-2 gap-4 mb-8">
-        {teammates?.map(m => (
-          <Link key={m.id} to={`/competitors/${m.id}`} className="card p-4 hover:border-primary/40 transition">
+         {teammates?.map(m => {
+           const content = (
             <div className="flex items-center gap-3">
               <div className="h-16 w-16 rounded-full overflow-hidden border border-border bg-card shrink-0 flex items-center justify-center">
                 {m.avatarUrl ? (
@@ -170,8 +174,11 @@ const TeamDashboardPage = () => {
                 </div>
               </div>
             </div>
-          </Link>
-        ))}
+           );
+           return m.userType === 'competitor' && (m.edition ?? 0) >= 5 && m.profilePublic !== false ? (
+             <Link key={m.id} to={`/builders/${encodeURIComponent(m.username || String(m.id))}`} className="card p-4 hover:border-primary/40 transition">{content}</Link>
+           ) : <div key={m.id} className="card p-4">{content}</div>;
+         })}
       </div>
 
       {/* App upload / edit */}

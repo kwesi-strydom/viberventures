@@ -1,28 +1,8 @@
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Loader2, ArrowLeft, Trophy, Star, ExternalLink } from 'lucide-react';
+import { Loader2, ArrowLeft } from 'lucide-react';
 import { SiX, SiInstagram, SiLinkedin } from 'react-icons/si';
-
-interface RecordEntry {
-  role: 'competitor' | 'spectator';
-  teamName?: string | null;
-  event: {
-    id: number;
-    edition: number;
-    name: string;
-    slug: string;
-    status: 'upcoming' | 'live' | 'past';
-    startDate?: string | null;
-  } | null;
-  result: {
-    rank: number;
-    title: string;
-    avg_rating: number;
-    rating_count: number;
-    thumbnail_url?: string | null;
-    game_url?: string | null;
-  } | null;
-}
+import ViberRecord, { type ViberRecordEntry } from '@/components/profile/ViberRecord';
 
 interface BuilderProfile {
   id: number;
@@ -35,14 +15,8 @@ interface BuilderProfile {
   instagram?: string | null;
   linkedin?: string | null;
   avatarUrl?: string | null;
-  record: RecordEntry[];
+  record: ViberRecordEntry[];
 }
-
-const resultLabel = (rank: number) => {
-  if (rank === 1) return { label: 'Champion', cls: 'border-[#f9a826]/40 text-[#f9a826] bg-[#f9a826]/10' };
-  if (rank <= 4) return { label: 'Finalist', cls: 'border-primary/40 text-primary bg-primary/10' };
-  return { label: 'Competed', cls: 'border-border text-muted-foreground bg-white/5' };
-};
 
 // Users paste anything from "@handle" to full URLs — always reduce to a clean handle.
 const cleanText = (v?: string | null) => {
@@ -60,23 +34,15 @@ const socialHandle = (v: string) =>
 
 const linkedinHref = (v: string) => {
   const s = v.trim();
-  if (/^https?:\/\//i.test(s)) return s;
-  if (s.includes('linkedin.com')) return `https://${s.replace(/^\/+/, '')}`;
-  return `https://linkedin.com/in/${s.replace(/^@/, '')}`;
+  const match = s.match(/^(?:https?:\/\/)?(?:www\.)?linkedin\.com\/in\/([^/?#]+)/i);
+  const handle = match?.[1] || s.replace(/^@/, '').split(/[/?#]/)[0];
+  return `https://www.linkedin.com/in/${encodeURIComponent(handle)}`;
 };
 
 const linkedinLabel = (v: string) => {
   const m = v.trim().match(/linkedin\.com\/in\/([^/?#]+)/i);
   return m ? m[1] : 'LinkedIn';
 };
-
-const RoleBadge = ({ role }: { role: string }) => (
-  <span className={`text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded border ${
-    role === 'competitor' ? 'border-primary/40 text-primary bg-primary/5' : 'border-border text-muted-foreground bg-white/5'
-  }`}>
-    {role}
-  </span>
-);
 
 const SocialCard = ({
   href,
@@ -152,9 +118,6 @@ const BuilderProfilePage = () => {
   const instagram = cleanText(profile.instagram);
   const linkedin = cleanText(profile.linkedin);
   const hasSocials = !!(twitter || instagram || linkedin);
-
-  const pastEntries = profile.record.filter(r => r.event?.status === 'past');
-  const sorted = [...pastEntries].sort((a, b) => (b.event?.edition ?? 0) - (a.event?.edition ?? 0));
 
   return (
     <div className="arena-wrap py-10 md:py-14">
@@ -265,64 +228,7 @@ const BuilderProfilePage = () => {
       </div>
 
       <div className="max-w-2xl mx-auto">
-        <h2 className="h3 uppercase mb-4">Viber record</h2>
-        {sorted.length === 0 ? (
-          <div className="card p-6 text-center text-muted-foreground text-sm">
-            No completed events yet.
-          </div>
-        ) : (
-          <div className="grid gap-4">
-            {sorted.map((entry, i) => {
-              const badge = entry.result ? resultLabel(entry.result.rank) : null;
-              return (
-                <div key={i} className="card p-5">
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                    <div className="flex-1">
-                      <div className="flex flex-wrap items-center gap-2 mb-1">
-                        <Link to={`/events/${entry.event!.slug}`} className="h3 uppercase hover:text-primary transition-colors">
-                          {entry.event!.name}
-                        </Link>
-                        <RoleBadge role={entry.role} />
-                        {badge && (
-                          <span className={`text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded border ${badge.cls}`}>
-                            {badge.label}
-                          </span>
-                        )}
-                      </div>
-                      {entry.teamName && (
-                        <p className="text-sm text-muted-foreground">Team {entry.teamName}</p>
-                      )}
-                      {entry.result && (
-                        <div className="flex items-center gap-4 mt-2 text-sm">
-                          <span className="inline-flex items-center gap-1 text-[#f9a826]">
-                            <Trophy size={14} /> #{entry.result.rank}
-                          </span>
-                          <span className="inline-flex items-center gap-1 text-primary">
-                            <Star size={14} /> {entry.result.avg_rating.toFixed(1)} ({entry.result.rating_count} votes)
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                    {entry.result && (
-                      <div className="sm:w-44 shrink-0">
-                        {entry.result.thumbnail_url && (
-                          <img src={entry.result.thumbnail_url} alt={entry.result.title} className="w-full h-24 object-cover rounded-md border border-border mb-2" />
-                        )}
-                        {entry.result.game_url ? (
-                          <a href={entry.result.game_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
-                            {entry.result.title} <ExternalLink size={12} />
-                          </a>
-                        ) : (
-                          <span className="text-sm text-foreground">{entry.result.title}</span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+        <ViberRecord entries={profile.record} />
       </div>
     </div>
   );
