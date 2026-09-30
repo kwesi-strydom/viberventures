@@ -1,3 +1,4 @@
+import {ASTANA_DATE,ASTANA_SLUG} from '@shared/astana';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Loader2, MapPin, ArrowRight, Calendar, PlayCircle, Film, Sparkles } from 'lucide-react';
@@ -124,8 +125,8 @@ const EventsPage = () => {
                     <p className="text-muted-foreground mb-5 line-clamp-3">{ev.description}</p>
                   )}
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted-foreground mb-6">
-                    {fmtDate(ev.startDate) && (
-                      <span className="flex items-center gap-1"><Calendar size={14} /> {fmtDate(ev.startDate)}</span>
+                    {(ev.slug===ASTANA_SLUG?ASTANA_DATE:fmtDate(ev.startDate)) && (
+                      <span className="flex items-center gap-1"><Calendar size={14} /> {(ev.slug===ASTANA_SLUG?ASTANA_DATE:fmtDate(ev.startDate))}</span>
                     )}
                     {ev.location && (
                       <span className="flex items-center gap-1"><MapPin size={14} /> {ev.location}</span>
@@ -160,9 +161,9 @@ const EventsPage = () => {
                 </div>
                 <div className="p-4 flex flex-col flex-1">
                   <h3 className="h4 uppercase mb-1">{ev.name}</h3>
-                  {fmtDate(ev.startDate) && (
+                  {(ev.slug===ASTANA_SLUG?ASTANA_DATE:fmtDate(ev.startDate)) && (
                     <span className="text-xs text-muted-foreground flex items-center gap-1 mb-3">
-                      <Calendar size={12} /> {fmtDate(ev.startDate)}
+                      <Calendar size={12} /> {(ev.slug===ASTANA_SLUG?ASTANA_DATE:fmtDate(ev.startDate))}
                     </span>
                   )}
                   <div className="mt-auto flex flex-wrap items-center gap-2">

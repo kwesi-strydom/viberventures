@@ -1,3 +1,9 @@
+import AstanaHub from "./pages/astana/AstanaHub";
+import AstanaJoin from "./pages/astana/AstanaJoin";
+import AstanaTeam from "./pages/astana/AstanaTeam";
+import AstanaLaunchpad from "./pages/astana/AstanaLaunchpad";
+import AstanaWinners from "./pages/astana/AstanaWinners";
+import AstanaAdmin from "./pages/astana/AstanaAdmin";
 
 import { useEffect, useState } from "react";
 import { Toaster } from "@/components/ui/toaster";
@@ -150,6 +156,12 @@ const App = () => {
             <Layout>
               <CompetitorGuard>
                 <Routes>
+                  <Route path="/astana" element={<AstanaHub />} />
+                  <Route path="/astana/join" element={<AstanaJoin />} />
+                  <Route path="/astana/team" element={<AstanaTeam />} />
+                  <Route path="/astana/launchpad" element={<AstanaLaunchpad />} />
+                  <Route path="/astana/winners" element={<AstanaWinners />} />
+                  <Route path="/admin/astana" element={<AstanaAdmin />} />
                   <Route path="/" element={<LandingPage />} />
                   <Route path="/welcome" element={<HomePage />} />
                   <Route path="/login" element={<LoginPage />} />

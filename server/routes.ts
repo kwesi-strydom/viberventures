@@ -1,3 +1,7 @@
+import { arenaTeamNames } from "./astana/arena";
+import { ZodError } from "zod";
+import { astanaStore } from "./astana/production";
+import { createAstanaRouter } from "./astana/routes";
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
@@ -79,6 +83,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   };
 
+  app.use("/api/astana", createAstanaRouter({ store: astanaStore, requireAdmin, broadcast }));
+
   // Compute elapsed event seconds from the stored timer state.
   const computeElapsed = (state: { status: string; accumulatedSeconds: number; startedAt: Date | null; durationSeconds: number }) => {
     let elapsed = state.accumulatedSeconds;
@@ -129,6 +135,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // participations carry no team names yet.
   const computeLinkedTeamNames = async (linkedEvent: { id: number; edition: number } | null): Promise<string[]> => {
     if (linkedEvent) {
+      const ev = await storage.getEventById(linkedEvent.id);
+      if (ev?.slug === 'viber-astana') return arenaTeamNames(true, () => astanaStore.getTeams(), async () => []);
       const parts = await storage.getParticipationsByEvent(linkedEvent.id);
       const names = Array.from(new Set(
         parts.filter(p => p.role === "competitor" && p.teamName).map(p => p.teamName as string),
@@ -156,7 +164,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         storage.getDashboardEvents(),
         storage.getFeedEvents(60),
       ]);
-      res.json({ event, teams, events, feed, linkedEvent });
+      const isAstana = linkedEvent && (await storage.getEventById(linkedEvent.id))?.slug === 'viber-astana';
+      const astanaTeams = isAstana ? await astanaStore.getTeams() : undefined;
+      res.json({ event, teams, events, feed, linkedEvent, astanaTeams });
     } catch (error) {
       console.error("Error fetching dashboard:", error);
       res.status(500).json({ error: "Failed to fetch dashboard" });
@@ -270,6 +280,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
+      const linked = await resolveLinkedEvent(await storage.getEventState());
+      if ('name' in req.body && linked && (await storage.getEventById(linked.id))?.slug === 'viber-astana') {
+        return res.status(400).json({ message: 'Astana team labels stay fixed; rename the project instead.' });
+      }
       const allowed = ["name", "color", "rank", "shields", "sortOrder"];
       const updates: Record<string, unknown> = {};
       for (const key of allowed) if (key in req.body) updates[key] = req.body[key];
@@ -287,7 +301,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { teamId, type, durationSeconds, label } = req.body ?? {};
       const teams = await storage.getDashboardTeams();
-      const team = teams.find((t) => t.id === Number(teamId));
+      const activeNames = await resolveLinkedTeamNames();
+      const team = teams.find((t) => t.id === Number(teamId) && activeNames.includes(t.name));
       if (!team) return res.status(400).json({ message: "Team not found" });
       const state = await storage.getEventState();
       const resolvedLabel = label || CHALLENGE_LABELS[type] || "Challenge";
@@ -328,7 +343,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const dur = !isNaN(d) ? d : null;
 
       // Make sure the dashboard reflects the current rosters before attaching.
-      await storage.syncDashboardTeams(await resolveLinkedTeamNames());
+      const desiredNames = await resolveLinkedTeamNames();
+      if (teamNames.some((name: unknown) => typeof name !== 'string' || !desiredNames.includes(name))) {
+        return res.status(409).json({ message: 'The roster changed. Refresh the wheel before spinning.' });
+      }
+      await storage.syncDashboardTeams(desiredNames);
       const dashTeams = await storage.getDashboardTeams();
 
       const created: unknown[] = [];
@@ -1807,7 +1826,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       console.error("Error creating game:", error);
-      if (error.name === 'ZodError') {
+      if (error instanceof ZodError) {
         res.status(400).json({ error: "Invalid game data", details: error.errors });
       } else {
         res.status(500).json({ error: "Failed to create game" });
@@ -1991,7 +2010,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Error rating game:", error);
       res.status(500).json({ 
         error: "Failed to rate game",
-        debug: process.env.NODE_ENV === 'development' ? error.message : undefined
+        debug: process.env.NODE_ENV === 'development' && error instanceof Error ? error.message : undefined
       });
     }
   });

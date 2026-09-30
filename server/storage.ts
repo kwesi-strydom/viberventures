@@ -1,3 +1,4 @@
+import { reconcileDashboardTeams } from "./dashboard-projection";
 import { CURRENT_EDITION, users, games, ratings, sessions, teams, onboardings, events as eventsTable, eventParticipations, eventState, dashboardTeams, dashboardEvents, feedEvents, workshops as workshopsTable, type User, type InsertUser, type Game, type InsertGame, type Rating, type InsertRating, type Session, type Team, type OnboardingRecord, type Event, type InsertEvent, type EventParticipation, type InsertEventParticipation, type EventState, type DashboardTeam, type InsertDashboardTeam, type DashboardEvent, type InsertDashboardEvent, type FeedEvent, type InsertFeedEvent, type Workshop, type InsertWorkshop } from "@shared/schema";
 
 export type EventResult = Game & { avg_rating: number; rating_count: number; rank: number };
@@ -487,22 +488,11 @@ export class MemStorage implements IStorage {
 
   async syncDashboardTeams(desiredNames: string[]): Promise<DashboardTeam[]> {
     const palette = ["#f9a826", "#ef4444", "#a855f7", "#22d3ee", "#84cc16", "#ec4899", "#3b82f6", "#f97316"];
-    // Dedupe existing dashboard teams by name (keep first occurrence).
-    const seen = new Map<string, DashboardTeam>();
-    for (const t of this.dashTeams) if (!seen.has(t.name)) seen.set(t.name, t);
-    // Drop any dashboard team whose platform team no longer exists.
-    const desiredSet = new Set(desiredNames);
-    this.dashTeams = Array.from(seen.values()).filter(t => desiredSet.has(t.name));
-    // Add missing teams and keep sortOrder aligned to the desired ordering.
-    desiredNames.forEach((name, i) => {
-      const existing = this.dashTeams.find(t => t.name === name);
-      if (!existing) {
-        this.dashTeams.push({ id: this.dashTeamSeq++, name, color: palette[i % palette.length], rank: null, shields: 0, sortOrder: i });
-      } else {
-        existing.sortOrder = i;
-      }
-    });
-    return this.getDashboardTeams();
+    return reconcileDashboardTeams(
+      await this.getDashboardTeams(), desiredNames,
+      (name, sortOrder) => this.createDashboardTeam({name, sortOrder, color:palette[sortOrder % palette.length], rank:null, shields:0}),
+      (row, sortOrder) => this.updateDashboardTeam(row.id, {sortOrder}),
+    );
   }
 
   async getDashboardEvents(): Promise<DashboardEvent[]> {
@@ -1131,32 +1121,11 @@ export class DatabaseStorage implements IStorage {
 
   async syncDashboardTeams(desiredNames: string[]): Promise<DashboardTeam[]> {
     const palette = ["#f9a826", "#ef4444", "#a855f7", "#22d3ee", "#84cc16", "#ec4899", "#3b82f6", "#f97316"];
-    const existing = await db.select().from(dashboardTeams).orderBy(dashboardTeams.sortOrder, dashboardTeams.id);
-    // Dedupe by name (keep first), removing accidental duplicates.
-    const seen = new Map<string, DashboardTeam>();
-    for (const t of existing) {
-      if (seen.has(t.name)) await db.delete(dashboardTeams).where(eq(dashboardTeams.id, t.id));
-      else seen.set(t.name, t);
-    }
-    // Drop teams whose platform team no longer exists.
-    const desiredSet = new Set(desiredNames);
-    for (const [name, t] of Array.from(seen.entries())) {
-      if (!desiredSet.has(name)) {
-        await db.delete(dashboardTeams).where(eq(dashboardTeams.id, t.id));
-        seen.delete(name);
-      }
-    }
-    // Add missing teams; align sortOrder to desired ordering (write only on change).
-    for (let i = 0; i < desiredNames.length; i++) {
-      const name = desiredNames[i];
-      const t = seen.get(name);
-      if (!t) {
-        await db.insert(dashboardTeams).values({ name, color: palette[i % palette.length], rank: null, shields: 0, sortOrder: i });
-      } else if (t.sortOrder !== i) {
-        await db.update(dashboardTeams).set({ sortOrder: i }).where(eq(dashboardTeams.id, t.id));
-      }
-    }
-    return this.getDashboardTeams();
+    return reconcileDashboardTeams(
+      await this.getDashboardTeams(), desiredNames,
+      (name, sortOrder) => this.createDashboardTeam({name, sortOrder, color:palette[sortOrder % palette.length], rank:null, shields:0}),
+      (row, sortOrder) => this.updateDashboardTeam(row.id, {sortOrder}),
+    );
   }
 
   async getDashboardEvents(): Promise<DashboardEvent[]> {

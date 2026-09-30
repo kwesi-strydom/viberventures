@@ -1,3 +1,5 @@
+import AstanaDisputeDialog from '@/components/astana/AstanaDisputeDialog';
+import { useToast } from '@/hooks/use-toast';
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
@@ -31,6 +33,7 @@ const DISPUTE_COLORS = ['#ff3d9a', '#2d9bff', '#2bd576'];
 type Phase = 'idle' | 'countdown' | 'spinning' | 'result';
 
 const WheelOfDestinyPage = () => {
+  const { toast } = useToast();
   const [phase, setPhase] = useState<Phase>('idle');
   const [countdown, setCountdown] = useState(10);
   const [countdownKey, setCountdownKey] = useState(0);
@@ -58,6 +61,7 @@ const WheelOfDestinyPage = () => {
   const calamityMutation = useMutation({
     mutationFn: (body: { teamNames: string[]; type: string; label: string }) =>
       apiRequest('/api/admin/dashboard/calamity', { method: 'POST', body: JSON.stringify(body) }),
+    onError: () => toast({ title: 'Challenge was not saved', description: 'Retry the result below before spinning again.', variant: 'destructive' }),
   });
 
   const clearOutcomesMutation = useMutation({
@@ -79,7 +83,20 @@ const WheelOfDestinyPage = () => {
 
   // The wheel targets the SAME roster as the live dashboard (the competition
   // the arena is linked to), so spins always hit the teams on the board.
-  const { data: dashboard } = useQuery<DashboardSnapshot>({ queryKey: ['/api/dashboard'] });
+  const { data: dashboard } = useQuery<DashboardSnapshot>({ queryKey: ['/api/dashboard'], refetchInterval:15000, refetchIntervalInBackground:false });
+  const linkedEventRef = useRef<number | null | undefined>(undefined);
+  const spinGeneration = useRef(0);
+  useEffect(() => {
+    const id=dashboard?.linkedEvent?.id;
+    if(linkedEventRef.current !== undefined && linkedEventRef.current !== id){
+      spinGeneration.current++;
+      if(countdownRef.current)clearInterval(countdownRef.current);
+      if(swapTimerRef.current)clearInterval(swapTimerRef.current);
+      setShowSwapModal(false);setCurrentSpinSelected([]);setSelectedA(null);setSelectedB(null);setSelectedC(null);
+      setPhase('idle');setSpinNumber(0);setShowPanel(false);calamityMutation.reset();
+    }
+    linkedEventRef.current=id;
+  },[dashboard?.linkedEvent?.id]);
   const teams = (dashboard?.teams ?? []).map(t => t.name).sort((a, b) => {
     const na = parseInt(a.replace(/\D/g, '')) || 0;
     const nb = parseInt(b.replace(/\D/g, '')) || 0;
@@ -120,7 +137,7 @@ const WheelOfDestinyPage = () => {
   };
 
   const handleSpin = () => {
-    if (phase !== 'idle') return;
+    if (phase !== 'idle' || calamityMutation.isPending || calamityMutation.isError) return;
     if (spinNumber >= CALAMITIES.length) return;
     // No competitors yet — surface the empty state instead of a pointless spin.
     if (teams.length === 0) {
@@ -152,6 +169,7 @@ const WheelOfDestinyPage = () => {
   };
 
   const doSpin = () => {
+    const generation = spinGeneration.current;
     playSiren();
     setPhase('spinning');
 
@@ -209,6 +227,7 @@ const WheelOfDestinyPage = () => {
     }
 
     setTimeout(() => {
+      if (generation !== spinGeneration.current) return;
       setSpinNumber(prev => prev + 1);
       setPhase('result');
       setShowPanel(true);
@@ -544,8 +563,10 @@ const WheelOfDestinyPage = () => {
         </div>
       </div>
 
+      {calamityMutation.isError && <div role="alert" className="p-4 border border-red-500">The challenge was not saved. <button className="btn" disabled={calamityMutation.isPending} onClick={() => calamityMutation.variables && calamityMutation.mutate(calamityMutation.variables)}>Retry saving challenge</button></div>}
       {/* ── Founders Dispute Rotate Modal ── */}
-      {showSwapModal && (() => {
+      {showSwapModal && dashboard?.astanaTeams && <AstanaDisputeDialog key={dashboard.linkedEvent?.id} teamNames={currentSpinSelected} onClose={() => setShowSwapModal(false)} />}
+      {showSwapModal && !dashboard?.astanaTeams && (() => {
         const teamA = currentSpinSelected[0];
         const teamB = currentSpinSelected[1];
         const teamC = currentSpinSelected[2];

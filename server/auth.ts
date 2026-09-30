@@ -184,7 +184,7 @@ export const login = async (req: Request, res: Response) => {
     console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
     res.status(500).json({ 
       message: 'Internal server error',
-      debug: process.env.NODE_ENV === 'development' ? error.message : undefined
+      debug: process.env.NODE_ENV === 'development' && error instanceof Error ? error.message : undefined
     });
   }
 };
