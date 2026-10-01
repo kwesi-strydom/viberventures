@@ -2,9 +2,9 @@
 name: Live dashboard event linkage
 description: How the arena dashboard connects to a competition and where its roster comes from
 ---
-The live arena is plug-and-play per competition: `event_state.linked_event_id` points at an `events` row (null = current edition's event). Roster resolution: prefer the linked event's `event_participations` (role=competitor, team_name set); fall back to edition-based `users.team_name` when participations carry no team names. The Wheel of Destiny reads its team list from `/api/dashboard` teams so spins always target the board's roster.
+The arena is one shared display linked to the selected competition, not a separate simultaneous arena for each event. The wheel must target that same competition's roster; a current-edition fallback is only for the deliberate legacy/unlinked mode, never a replacement for an empty Astana roster.
 
-Timer actions on `/api/admin/dashboard/event`: `reset` = clock only (history kept), `restart` = clock to zero + running with timeline/feed wiped, `set-event` links a competition, `set-duration` editable any time (min 60s).
+The operator timer is deliberately manual and independent: set a duration, Start/Resume, Stop, Reset. Linking an event must not configure or reset the clock; time reaching zero must not trigger challenges, phase prompts, roster changes, or launchpad transitions. Legacy competition-reset APIs are not timer controls.
 
-**Why:** future/parallel competitions must reuse the dashboard without code changes, and the timeline is driven by wheel spins — not the timer — so clock resets must not wipe events.
-**How to apply:** any new dashboard/wheel feature should resolve teams via the linked event, never via CURRENT_EDITION directly.
+**Why:** future/parallel competitions must reuse the dashboard without code changes, and the timeline is driven by wheel spins — not the timer — so clock resets must not wipe events. After Astana on 2026-09-30, the organizer reported avoiding the timer because its schedule felt too constraining; manual, independent controls are the intentional product direction.
+**How to apply:** Keep dashboard and wheel roster scope aligned with the selected competition, and keep manual timer operations separate from linking or resetting that competition.

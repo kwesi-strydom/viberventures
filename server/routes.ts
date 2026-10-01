@@ -1,13 +1,18 @@
 import { arenaTeamNames } from "./astana/arena";
-import { ZodError } from "zod";
+import { createDashboardTimerHandler, ManualTimerStore, TimerInputError } from "./dashboard-timer";
+import { z, ZodError } from "zod";
 import { astanaStore } from "./astana/production";
+import { AstanaError } from "./astana/domain";
 import { createAstanaRouter } from "./astana/routes";
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
+import { pool } from "./db";
+import { WheelProgressConflict, WheelProgressStore, WHEEL_CHALLENGE_ORDER } from "./wheel-progress";
 import { insertGameSchema, insertRatingSchema } from "@shared/schema";
 import { signup, login, logout, getCurrentUser, requireAuth } from "./auth";
+import { safeAsyncHandler } from "./async-handler";
 import cookieParser from "cookie-parser";
 import https from "https";
 import Stripe from "stripe";
@@ -35,6 +40,57 @@ const PAYMENT_METHODS = ["cash", "crypto"];
 // returning competitors to go through onboarding again for the new edition.
 const CURRENT_EDITION = 5;
 
+const wheelSql = {
+  query: async <T = Record<string, unknown>>(text: string, values: unknown[] = []) => {
+    const result = await pool.query(text, values as any[]);
+    return result.rows as T[];
+  },
+  transaction: async <T>(callback: (tx: { query: <R = Record<string, unknown>>(text: string, values?: unknown[]) => Promise<R[]> }) => Promise<T>) => {
+    const client = await pool.connect();
+    const tx = {
+      query: async <R = Record<string, unknown>>(text: string, values: unknown[] = []) => {
+        const result = await client.query(text, values as any[]);
+        return result.rows as R[];
+      },
+    };
+    try {
+      await client.query('BEGIN');
+      try {
+        const result = await callback(tx);
+        await client.query('COMMIT');
+        return result;
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      }
+    } finally {
+      client.release();
+    }
+  },
+};
+
+const wheelProgressStore = new WheelProgressStore(wheelSql);
+const manualTimerStore = new ManualTimerStore(wheelSql);
+const wheelSpinRequestSchema = z.object({
+  linkedEventId: z.number().int().positive().nullable(),
+  generation: z.number().int().nonnegative(),
+  nextOrdinal: z.number().int().min(0).max(4),
+  requestId: z.string().uuid(),
+  teamNames: z.array(z.string().trim().min(1).max(160)).min(1).max(3),
+});
+const wheelDisputeBaseSchema = z.object({
+  linkedEventId: z.number().int().positive().nullable(),
+  generation: z.number().int().nonnegative(),
+  requestId: z.string().uuid(),
+  rosterRevision: z.number().int().nonnegative(),
+});
+const wheelAstanaDisputeSchema = wheelDisputeBaseSchema.extend({
+  guestIds: z.array(z.string().uuid()).min(2).max(3),
+});
+const wheelLegacyDisputeSchema = wheelDisputeBaseSchema.extend({
+  userIds: z.array(z.number().int().positive()).min(2).max(3),
+});
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Cookie parser middleware
   app.use(cookieParser());
@@ -43,7 +99,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/auth/signup", (req, res, next) => {
     console.log('🟢 SIGNUP REQUEST RECEIVED:', { email: req.body.email, userAgent: req.get('User-Agent') });
     next();
-  }, signup);
+  }, safeAsyncHandler(signup));
   
   app.post("/api/auth/login", (req, res, next) => {
     console.log('🟢 LOGIN REQUEST RECEIVED:', { 
@@ -54,21 +110,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       referer: req.get('Referer')
     });
     next();
-  }, login);
+  }, safeAsyncHandler(login));
   
-  app.post("/api/auth/logout", logout);
-  app.get("/api/auth/user", getCurrentUser);
+  app.post("/api/auth/logout", safeAsyncHandler(logout));
+  app.get("/api/auth/user", safeAsyncHandler(getCurrentUser));
 
   // ── Admin Routes ───────────────────────────────────────────────────────────
 
   const requireAdmin = async (req: any, res: any, next: any) => {
-    const sessionId = req.cookies.sessionId;
-    const session = await storage.getSession(sessionId);
-    if (!session || session.expires_at < new Date()) return res.status(401).json({ message: 'Authentication required' });
-    const user = await storage.getUser(session.user_id);
-    if (!user || !user.isAdmin) return res.status(403).json({ message: 'Admin access required' });
-    req.adminUser = user;
-    next();
+    try {
+      const sessionId = req.cookies.sessionId;
+      const session = await storage.getSession(sessionId);
+      if (!session || session.expires_at < new Date()) return res.status(401).json({ message: 'Authentication required' });
+      const user = await storage.getUser(session.user_id);
+      if (!user || !user.isAdmin) return res.status(403).json({ message: 'Admin access required' });
+      req.adminUser = user;
+      next();
+    } catch (error) {
+      next(error);
+    }
   };
 
   // ── Live Dashboard ─────────────────────────────────────────────────────────
@@ -210,10 +270,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Timer control: start | pause | reset | end | set-duration.
+  // The manual timer has no dependency on roster, launchpad or wheel controls.
+  app.post("/api/admin/dashboard/timer", requireAdmin, createDashboardTimerHandler({
+    mutateState: body => manualTimerStore.mutate(body),
+    broadcast,
+  }));
+
+  // Legacy event/roster control; timer UI uses the isolated endpoint above.
   app.post("/api/admin/dashboard/event", requireAdmin, async (req, res) => {
     try {
       const { action, durationSeconds } = req.body ?? {};
+      // Older open admin tabs must use the same locked clock operations too.
+      const manualActions: Record<string, string> = {
+        start: "start", pause: "stop", reset: "reset", "set-duration": "set-duration",
+      };
+      if (typeof action === "string" && Object.hasOwn(manualActions, action)) {
+        const { state, changed } = await manualTimerStore.mutate({ action: manualActions[action], durationSeconds });
+        if (changed) broadcast({ type: "dashboard_update" });
+        return res.json(state);
+      }
       const current = await storage.getEventState();
       let updates: Record<string, unknown> = {};
       switch (action) {
@@ -269,6 +344,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       broadcast({ type: "dashboard_update" });
       res.json(updated);
     } catch (error) {
+      if (error instanceof TimerInputError) return res.status(400).json({ message: error.message });
       console.error("Error updating event:", error);
       res.status(500).json({ message: "Failed to update event" });
     }
@@ -329,61 +405,198 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Apply a Wheel of Destiny calamity to one or more teams (by name). Drives the
-  // dashboard straight from the Wheel: creates a challenge card + feed entry per
-  // affected team. "Safe" rounds post an info note instead of a challenge.
+  app.get("/api/admin/dashboard/wheel-progress", requireAdmin, async (_req, res) => {
+    try {
+      const state = await storage.getEventState();
+      const progress = await wheelProgressStore.get(state.linkedEventId);
+      const pendingDispute = await wheelProgressStore.getPendingDispute(state.linkedEventId);
+      res.json({ ...progress, pendingDispute });
+    } catch (error) {
+      console.error("Error loading wheel progress:", error);
+      res.status(500).json({ message: "Failed to load wheel progress" });
+    }
+  });
+
+  // A challenge result, its dashboard/feed entries, and advancement of the
+  // per-event wheel cursor commit together. Request IDs make a lost-response
+  // retry idempotent; the generation and ordinal reject stale browser sessions.
   app.post("/api/admin/dashboard/calamity", requireAdmin, async (req, res) => {
     try {
-      const { teamNames, type, label, durationSeconds } = req.body ?? {};
-      if (!Array.isArray(teamNames) || teamNames.length === 0) {
-        return res.status(400).json({ message: "teamNames required" });
-      }
-      const resolvedLabel = label || CHALLENGE_LABELS[type] || "Challenge";
+      const parsed = wheelSpinRequestSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: "Invalid wheel spin request" });
+      const input = parsed.data;
       const state = await storage.getEventState();
-      const atSeconds = computeElapsed(state);
-      const d = durationSeconds != null ? parseInt(durationSeconds, 10) : NaN;
-      const dur = !isNaN(d) ? d : null;
+      if (state.linkedEventId !== input.linkedEventId) {
+        const progress = await wheelProgressStore.get(state.linkedEventId);
+        const pendingDispute = await wheelProgressStore.getPendingDispute(state.linkedEventId);
+        return res.status(409).json({ message: "The linked event changed. Refresh wheel progress before spinning.", progress, pendingDispute });
+      }
 
-      // Make sure the dashboard reflects the current rosters before attaching.
-      const desiredNames = await resolveLinkedTeamNames();
-      if (teamNames.some((name: unknown) => typeof name !== 'string' || !desiredNames.includes(name))) {
-        return res.status(409).json({ message: 'The roster changed. Refresh the wheel before spinning.' });
+      const linkedEvent = await resolveLinkedEvent(state);
+      const desiredNames = await computeLinkedTeamNames(linkedEvent);
+      if (input.teamNames.some(name => !desiredNames.includes(name))) {
+        return res.status(409).json({ message: "The roster changed. Refresh the wheel before spinning." });
       }
       await storage.syncDashboardTeams(desiredNames);
-      const dashTeams = await storage.getDashboardTeams();
 
-      const created: unknown[] = [];
-      for (const name of teamNames) {
-        if (type === "safe_round") {
-          await storage.createFeedEvent({ kind: "info", message: `🛡️ ${name} is safe this round.`, atSeconds });
-          continue;
-        }
-        let team = dashTeams.find(t => t.name === name);
-        if (!team) {
-          team = await storage.createDashboardTeam({ name: String(name), color: "#f9a826", sortOrder: dashTeams.length, shields: 0, rank: null });
-          dashTeams.push(team);
-        }
-        const event = await storage.createDashboardEvent({
-          category: "challenge",
-          type: type || "custom",
-          label: resolvedLabel,
-          teamId: team.id,
-          teamName: team.name,
-          atSeconds,
-          durationSeconds: dur,
-          active: true,
-        });
-        await storage.createFeedEvent({ kind: "challenge", message: `⚡ ${resolvedLabel} hits ${team.name}!`, atSeconds });
-        created.push(event);
+      const challenge = WHEEL_CHALLENGE_ORDER[input.nextOrdinal];
+      const result = await wheelProgressStore.commit({
+        ...input,
+        type: challenge.type,
+        label: challenge.label,
+        atSeconds: computeElapsed(state),
+      });
+      if (result.status === "stale") {
+        const progress = await wheelProgressStore.get(input.linkedEventId);
+        const pendingDispute = await wheelProgressStore.getPendingDispute(input.linkedEventId);
+        return res.status(409).json({ message: result.message, progress, pendingDispute });
       }
-      broadcast({ type: "dashboard_update" });
-      if (type !== "safe_round") {
-        broadcast({ type: "notification", data: { title: "Wheel of Destiny", body: `${resolvedLabel} — ${teamNames.join(", ")}`, level: "challenge" } });
+
+      if (result.status === "committed") {
+        broadcast({ type: "dashboard_update" });
+        if (challenge.type !== "safe_round") {
+          broadcast({
+            type: "notification",
+            data: { title: "Wheel of Destiny", body: `${challenge.label} — ${input.teamNames.join(", ")}`, level: "challenge" },
+          });
+        }
       }
-      res.status(201).json({ ok: true, created });
+      const pendingDispute = await wheelProgressStore.getPendingDispute(input.linkedEventId);
+      const progress = await wheelProgressStore.get(input.linkedEventId);
+      res.status(result.status === "replayed" ? 200 : 201).json({ ok: true, ...result, progress, pendingDispute });
     } catch (error) {
-      console.error("Error applying calamity:", error);
-      res.status(500).json({ message: "Failed to apply calamity" });
+      if (error instanceof WheelProgressConflict) return res.status(409).json({ message: error.message, code: error.code });
+      console.error("Error applying wheel challenge:", error);
+      res.status(500).json({ message: "Failed to apply wheel challenge" });
+    }
+  });
+
+  // The wheel metadata is validated in the same transaction that claims the
+  // unresolved dispute. Ordinary Astana organizer rotations keep using their
+  // existing endpoint without wheel-specific requirements.
+  app.post("/api/admin/dashboard/wheel-dispute/rotate", requireAdmin, async (req, res) => {
+    try {
+      const state = await storage.getEventState();
+      if (state.linkedEventId !== req.body?.linkedEventId) {
+        return res.status(409).json({ message: "The linked event changed. Refresh before resolving this dispute." });
+      }
+      const resolvedEvent = await resolveLinkedEvent(state);
+      const isAstana = Boolean(
+        resolvedEvent &&
+        (await pool.query(`SELECT slug FROM events WHERE id = $1`, [resolvedEvent.id])).rows[0]?.slug === "viber-astana",
+      );
+      const parsed = isAstana
+        ? wheelAstanaDisputeSchema.safeParse(req.body)
+        : wheelLegacyDisputeSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: "Invalid Founders Dispute resolution request" });
+
+      const body = parsed.data;
+      const result = await wheelProgressStore.resolveDispute(
+        { linkedEventId: body.linkedEventId, generation: body.generation, requestId: body.requestId },
+        async (dispute, tx) => {
+          if (isAstana) {
+            const astanaBody = body as z.infer<typeof wheelAstanaDisputeSchema>;
+            if (!resolvedEvent) {
+              throw new WheelProgressConflict("This dispute does not belong to the current Astana event.", "dispute-stale");
+            }
+            await astanaStore.rotateGuestsInTransaction(
+              tx,
+              astanaBody.guestIds,
+              astanaBody.rosterRevision,
+              resolvedEvent.id,
+              dispute.teamNames,
+            );
+            return { message: "Members rotated", guestIds: astanaBody.guestIds };
+          }
+
+          const legacyBody = body as z.infer<typeof wheelLegacyDisputeSchema>;
+          const userRows = await tx.query<{
+            id: number;
+            user_type: string;
+            team_name: string | null;
+          }>(
+            `SELECT id, user_type, team_name FROM users
+             WHERE id = ANY($1::integer[]) ORDER BY id FOR UPDATE`,
+            [legacyBody.userIds],
+          );
+          const usersById = new Map(userRows.map(user => [Number(user.id), user]));
+          const selectedUsers = legacyBody.userIds.map(id => usersById.get(id));
+          const eventMemberships = dispute.linkedEventId === null
+            ? []
+            : await tx.query<{ user_id: number; team_name: string | null }>(
+                `SELECT user_id, team_name FROM event_participations
+                 WHERE event_id = $1 AND role = 'competitor' FOR UPDATE`,
+                [dispute.linkedEventId],
+              );
+          const eventRosterIsAuthoritative = eventMemberships.some(membership => membership.team_name !== null);
+          const membershipsByUser = new Map<number, Array<{ user_id: number; team_name: string | null }>>();
+          for (const membership of eventMemberships) {
+            const userId = Number(membership.user_id);
+            membershipsByUser.set(userId, [...(membershipsByUser.get(userId) ?? []), membership]);
+          }
+          if (
+            selectedUsers.some((user, index) => {
+              if (!user || user.user_type !== "competitor") return true;
+              if (!eventRosterIsAuthoritative) return user.team_name !== dispute.teamNames[index];
+              const memberships = membershipsByUser.get(user.id) ?? [];
+              return memberships.length !== 1 || memberships[0].team_name !== dispute.teamNames[index];
+            }) ||
+            selectedUsers.length !== dispute.teamNames.length ||
+            new Set(legacyBody.userIds).size !== legacyBody.userIds.length
+          ) {
+            throw new WheelProgressConflict("Select one participant from each team affected by this dispute.", "dispute-stale");
+          }
+          for (let index = 0; index < selectedUsers.length; index++) {
+            const user = selectedUsers[index]!;
+            const nextTeamName = dispute.teamNames[(index + 1) % dispute.teamNames.length];
+            await tx.query(`UPDATE users SET team_name=$1 WHERE id=$2`, [nextTeamName, user.id]);
+            if (eventRosterIsAuthoritative && dispute.linkedEventId !== null) {
+              await tx.query(
+                `UPDATE event_participations SET team_name=$1
+                 WHERE event_id=$2 AND user_id=$3 AND role='competitor'`,
+                [nextTeamName, dispute.linkedEventId, user.id],
+              );
+            }
+          }
+          await tx.query(
+            `UPDATE dashboard_events
+             SET active=FALSE, resolved_at=now(), result_text='Members rotated'
+             WHERE wheel_request_id=$1 AND active=TRUE`,
+            [dispute.requestId],
+          );
+          const rotated = dispute.teamNames.join(" → ");
+          await tx.query(
+            `INSERT INTO feed_events (kind, message)
+             VALUES ('challenge', $1)`,
+            [`🔄 Founders' Dispute resolved — members rotated: ${rotated}.`],
+          );
+          return { message: "Members rotated", userIds: legacyBody.userIds };
+        },
+      );
+      broadcast({ type: "dashboard_update" });
+      if (isAstana) broadcast({ type: "astana_update" });
+      res.json({ ok: true, result });
+    } catch (error) {
+      if (error instanceof WheelProgressConflict) return res.status(409).json({ message: error.message, code: error.code });
+      if (error instanceof AstanaError) return res.status(error.status).json({ message: error.message });
+      console.error("Error resolving wheel dispute:", error);
+      res.status(500).json({ message: "Failed to resolve the Founders Dispute" });
+    }
+  });
+
+  // Wheel reset removes only outcomes created by this wheel, advances its
+  // generation so late retries cannot recreate cleared entries, and never
+  // changes the event timer or its linked roster.
+  app.post("/api/admin/dashboard/wheel-reset", requireAdmin, async (_req, res) => {
+    try {
+      const state = await storage.getEventState();
+      const progress = await wheelProgressStore.reset(state.linkedEventId);
+      broadcast({ type: "dashboard_update" });
+      res.json({ ok: true, progress });
+    } catch (error) {
+      if (error instanceof WheelProgressConflict) return res.status(409).json({ message: error.message, code: error.code });
+      console.error("Error resetting wheel:", error);
+      res.status(500).json({ message: "Failed to reset the Wheel of Destiny" });
     }
   });
 
@@ -472,13 +685,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/admin/users", requireAdmin, async (req, res) => {
+  app.get("/api/admin/users", requireAdmin, safeAsyncHandler(async (req, res) => {
     const allUsers = await storage.getAllUsers();
     const safe = allUsers.map(({ password: _, ...u }) => u);
     res.json(safe);
-  });
+  }));
 
-  app.patch("/api/admin/users/:id", requireAdmin, async (req, res) => {
+  app.patch("/api/admin/users/:id", requireAdmin, safeAsyncHandler(async (req, res) => {
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: 'Invalid user id' });
     const allowed = ['userType', 'teamName', 'teammate', 'teammateEmail', 'isAdmin', 'name', 'country', 'shirtSize', 'onboarded', 'shirtPaid', 'paymentMethod'];
@@ -509,12 +722,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     const { password: _, ...safe } = updated;
     res.json(safe);
-  });
+  }));
 
-  app.delete("/api/admin/users/:id", requireAdmin, async (req, res) => {
+  app.delete("/api/admin/users/:id", requireAdmin, safeAsyncHandler(async (req, res) => {
     await storage.deleteUser(parseInt(req.params.id));
     res.json({ message: 'User deleted' });
-  });
+  }));
 
   // Historical onboarding snapshots for a past Viber edition (read-only).
   app.get("/api/admin/onboardings/:edition", requireAdmin, async (req, res) => {

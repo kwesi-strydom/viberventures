@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { readFile } from 'node:fs/promises';
 import { AstanaStore } from './store';
 import { makeTeams } from './domain';
-import { joinSchema, projectSchema } from '../../shared/astana';
+import { deviceCodeSchema, joinSchema, projectSchema } from '../../shared/astana';
 
 async function setup() {
   const pg = new PGlite();
@@ -31,6 +32,11 @@ test('input validation and balanced teams', () => {
   assert.deepEqual(makeTeams(['a','b','c','d','e'],m=>m-1).map(t=>t.length),[2,3]);
   assert.equal(projectSchema.safeParse({...project(),appUrl:'javascript:alert(1)'}).success,false);
   assert.equal(projectSchema.safeParse({...project(),appUrl:'https://user:pass@example.com'}).success,false);
+  for(const value of ['not a url','%%','https://','/relative']) assert.equal(projectSchema.safeParse({...project(),appUrl:value}).success,false);
+  assert.equal(projectSchema.safeParse({...project(),thumbnailUrl:'https://'}).success,false);
+  assert.equal(projectSchema.safeParse({...project(),socialUrl:'%%'}).success,false);
+  assert.equal(deviceCodeSchema.parse({code:'abcd efgh-jklm-npqr'}).code,'ABCDEFGHJKLMNPQR');
+  assert.equal(deviceCodeSchema.safeParse({code:'0000-0000-0000-0000'}).success,false);
 });
 
 test('migration is repeatable; join is isolated, idempotent, recoverable', async () => {
@@ -43,16 +49,64 @@ test('migration is repeatable; join is isolated, idempotent, recoverable', async
     assert.equal((await store.join(entry(1),first.token)).me.guest?.id,first.me.guest?.id);
     await assert.rejects(store.join(entry(1),null),/already registered/i);
     assert.equal((await store.getMe('invalid')).guest,null);
+    const pendingDevice=await store.issueDeviceCode(first.token);
     const recovery=await store.issueRecovery(first.me.guest!.id);
     const recovered=await store.recover(recovery);
     assert.equal(recovered.me.guest?.id,first.me.guest!.id);
     assert.equal((await store.getMe(first.token)).guest,null);
+    await assert.rejects(store.redeemDeviceCode({code:pendingDevice.code}),/invalid or expired/i);
     await assert.rejects(store.recover(recovery),/expired|used/i);
     const expired=await store.issueRecovery(first.me.guest!.id);
     await pg.exec("UPDATE astana_recovery_tokens SET expires_at=now()-interval '1 minute'");
     await assert.rejects(store.recover(expired),/expired|used/i);
     assert.equal((await pg.query("SELECT name FROM events WHERE edition=5")).rows[0].name,'Viber 5');
   } finally { await pg.close(); }
+});
+
+test('temporary device codes add a one-use session without removing the source session or changing roster',async()=>{
+ const {pg,store}=await setup();
+ try{
+  const first=await store.join(entry(31),null);
+  await store.join(entry(32),null);
+  let admin=await store.getAdminState();admin=await store.assignTeams(admin.rosterRevision);
+  const firstTeam=admin.teams.find(t=>t.members.some(g=>g.id===first.me.guest!.id))!;
+  const issue=await store.issueDeviceCode(first.token);
+  assert.match(issue.code,/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}(-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}){3}$/);
+  assert.ok(Date.parse(issue.expiresAt)>Date.now());
+  await assert.rejects(store.issueDeviceCode(null),/check in again/i);
+  const beforeGuests=await pg.query('SELECT id,team_id FROM astana_guests ORDER BY id');
+  const attempts=await Promise.allSettled([
+   store.redeemDeviceCode({code:issue.code.toLowerCase()}),
+   store.redeemDeviceCode({code:issue.code.replace(/-/g,'')}),
+  ]);
+  const fulfilled=attempts.filter((r):r is PromiseFulfilledResult<{token:string;me:import('../../shared/astana').Me}>=>r.status==='fulfilled');
+  assert.equal(fulfilled.length,1);
+  const added=fulfilled[0].value;
+  assert.equal(added.me.guest?.id,first.me.guest?.id);
+  assert.equal(added.me.team?.id,firstTeam.id);
+  assert.equal((await store.getMe(first.token)).guest?.id,first.me.guest?.id);
+  const sessions=await pg.query('SELECT count(*)::int AS n FROM astana_sessions WHERE guest_id=$1',[first.me.guest!.id]);
+  assert.equal(sessions.rows[0].n,2);
+  assert.deepEqual((await pg.query('SELECT id,team_id FROM astana_guests ORDER BY id')).rows,beforeGuests.rows);
+  assert.equal((await pg.query('SELECT count(*)::int AS n FROM astana_guests')).rows[0].n,2);
+  const rejectionMessage=async(action:()=>Promise<unknown>)=>{
+   let error:unknown;try{await action();}catch(caught){error=caught;}
+   assert.ok(error instanceof Error);return error.message;
+  };
+  const unknown=await rejectionMessage(()=>store.redeemDeviceCode({code:'ZZZZ-ZZZZ-ZZZZ-ZZZZ'}));
+  const reused=await rejectionMessage(()=>store.redeemDeviceCode({code:issue.code}));
+  assert.equal(unknown,reused);
+
+  const expired=await store.issueDeviceCode(first.token);
+  const codeHash=createHash('sha256').update(expired.code.replace(/-/g,'')).digest('hex');
+  await pg.query("UPDATE astana_device_codes SET expires_at=now()-interval '1 second' WHERE token_hash=$1",[codeHash]);
+  await assert.rejects(store.redeemDeviceCode({code:expired.code}),/invalid or expired/i);
+  await assert.rejects(store.redeemDeviceCode({code:'ZZZZ-ZZZZ-ZZZZ-ZZZZ'}),/invalid or expired/i);
+  assert.equal((await pg.query('SELECT count(*)::int AS n FROM astana_sessions WHERE guest_id=$1',[first.me.guest!.id])).rows[0].n,2);
+  assert.deepEqual((await pg.query('SELECT id,team_id FROM astana_guests ORDER BY id')).rows,beforeGuests.rows);
+  for(let i=0;i<3;i++)await store.issueDeviceCode(first.token);
+  await assert.rejects(store.issueDeviceCode(first.token),/wait 15 minutes/i);
+ }finally{await pg.close();}
 });
 
 test('teams, revisions, transfers, submissions, voting and publication', async () => {
@@ -124,13 +178,61 @@ test('HTTP authorization, cookies, invalid input, origin and privacy', async () 
    const cookie=response.headers.get('set-cookie')!; assert.match(cookie,/HttpOnly/i);
    assert.match(cookie,/SameSite=Lax/i);
    const body=await response.json(); assert.equal('email' in body.guest,false);
-   assert.equal((await request('/join','POST',entry(1))).status,409);
-   assert.equal((await request('/me','GET',undefined,cookie.split(';')[0])).status,200);
+    const duplicate=await request('/join','POST',entry(1));assert.equal(duplicate.status,409);
+    assert.match((await duplicate.json()).message,/sign-in code form/i);
+    const sourceCookie=cookie.split(';')[0];
+    assert.equal((await request('/me','GET',undefined,sourceCookie)).status,200);
+    assert.equal((await request('/device-code','POST',{})).status,401);
+    assert.equal((await request('/device-login','POST',{code:'ZZZZ-ZZZZ-ZZZZ-ZZZZ'})).status,400);
+    const issuedResponse=await request('/device-code','POST',{},sourceCookie);assert.equal(issuedResponse.status,200);
+    const issued=await issuedResponse.json() as {code:string;expiresAt:string};
+    assert.match(issued.code,/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}(-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}){3}$/);
+    assert.ok(Date.parse(issued.expiresAt)>Date.now());
+    assert.equal('token' in issued,false);
+    const deviceResponse=await request('/device-login','POST',{code:issued.code.toLowerCase()});
+    assert.equal(deviceResponse.status,200);
+    const deviceBody=await deviceResponse.json();
+    const deviceCookie=deviceResponse.headers.get('set-cookie')!;
+    assert.match(deviceCookie,/HttpOnly/i);
+    assert.match(deviceCookie,/SameSite=Lax/i);
+    assert.equal('token' in deviceBody,false);
+    const deviceCookieValue=deviceCookie.split(';')[0];
+    const [originalMe,deviceMe]=await Promise.all([
+      request('/me','GET',undefined,sourceCookie).then(r=>r.json()),
+      request('/me','GET',undefined,deviceCookieValue).then(r=>r.json()),
+    ]);
+    assert.equal(originalMe.guest.id,body.guest.id);
+    assert.equal(deviceMe.guest.id,body.guest.id);
+    assert.equal((await pg.query('SELECT count(*)::int AS n FROM astana_guests')).rows[0].n,1);
+    assert.equal((await pg.query('SELECT count(*)::int AS n FROM astana_sessions WHERE guest_id=$1',[body.guest.id])).rows[0].n,2);
+    const reused=await request('/device-login','POST',{code:issued.code});
+    const unknown=await request('/device-login','POST',{code:'ZZZZ-ZZZZ-ZZZZ-ZZZZ'});
+    assert.equal(reused.status,400);assert.equal(unknown.status,400);
+    assert.equal((await reused.json()).message,(await unknown.json()).message);
+
    const cross=await fetch(`http://127.0.0.1:${port}/api/astana/join`,{method:'POST',headers:{Origin:'https://evil.example','Content-Type':'application/json'},body:JSON.stringify(entry(2))});
    assert.equal(cross.status,403);
    assert.equal((await request('/project','PUT',{...project(),teamId:'00000000-0000-4000-8000-000000000001'})).status,401);
+    for(const [field,value] of [['appUrl','https://'],['thumbnailUrl','not a url'],['socialUrl','%%']]){
+      const malformed=await request('/project','PUT',{...project(),teamId:'00000000-0000-4000-8000-000000000001',[field]:value});
+      assert.equal(malformed.status,400,`${field} should be a validation error`);
+    }
    assert.equal((await request('/visitor','POST')).status,204);
    assert.deepEqual(await (await request('/winners')).json(),{published:false,projects:[]});
+
+    const diagnosticMessages:string[]=[];
+    const originalLogger=console.error;
+    const originalGetEvent=store.getEvent.bind(store);
+    try{
+      console.error=(...values:any[])=>diagnosticMessages.push(values.join(' '));
+      store.getEvent=async()=>{throw new TypeError('private sentinel must not be logged');};
+      assert.equal((await request('/event')).status,500);
+    }finally{
+      store.getEvent=originalGetEvent;
+      console.error=originalLogger;
+    }
+    assert.match(diagnosticMessages.join(' '),/GET \/api\/astana\/event \(TypeError\)/);
+    assert.doesNotMatch(diagnosticMessages.join(' '),/private sentinel/i);
  } finally {server.closeAllConnections(); await new Promise<void>(r=>server.close(()=>r())); await pg.close();}
 });
 

@@ -91,7 +91,6 @@ const DashboardPage = () => {
 
   return (
     <div className="w-full max-w-[1400px] mx-auto px-4 py-6 flex flex-col gap-5">
-      {data.astanaTeams && <div className="rounded-lg border border-yellow-400/40 p-4" role="status">{elapsed >= 3600 ? 'Build complete. Time for 60-second pitches.' : elapsed >= 600 ? `Founder challenge ${Math.min(5, Math.floor(elapsed / 600))} is due. Organizer: spin the Wheel of Destiny.` : 'Viber Astana · First founder challenge at 10 minutes.'}</div>}
       {/* Hero timer */}
       <HeroTimer event={event} remaining={remaining} elapsed={elapsed} pct={pct} isLive={isLive} events={events} />
 

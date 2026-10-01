@@ -1,0 +1,25 @@
+.astana-sign-in-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 24px;
+}
+
+.astana-device-code-value {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.astana-device-code input {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 800px) {
+  .astana-sign-in-options {
+    grid-template-columns: 1fr;
+  }
+}

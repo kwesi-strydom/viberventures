@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { storage } from './storage';
+import { safeAsyncHandler } from './async-handler';
 
 export const signup = async (req: Request, res: Response) => {
   try {
@@ -227,7 +228,7 @@ export const getCurrentUser = async (req: Request, res: Response) => {
   res.json({ user: userWithoutPassword });
 };
 
-export const requireAuth = async (req: Request, res: Response, next: any) => {
+export const requireAuth = safeAsyncHandler(async (req: Request, res: Response, next: any) => {
   const sessionId = req.cookies.sessionId;
   const session = await storage.getSession(sessionId);
   
@@ -239,4 +240,4 @@ export const requireAuth = async (req: Request, res: Response, next: any) => {
   if (!user) return res.status(401).json({ message: 'Authentication required' });
   (req as any).user = user;
   next();
-};
+});

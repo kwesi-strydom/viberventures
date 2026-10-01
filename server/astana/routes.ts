@@ -23,7 +23,9 @@ export function createAstanaRouter({store,requireAdmin,broadcast}:{store:AstanaS
   try {await fn(req,res);}catch(error){
    if(error instanceof ZodError){res.status(400).json({message:error.issues.map(i=>`${i.path.join('.')}: ${i.message}`).join('; ')});return;}
    if(error instanceof AstanaError){res.status(error.status).json({message:error.message});return;}
-   console.error('Astana request failed:',error instanceof Error?error.name:'unknown');
+    const route=typeof req.route?.path==='string'?req.route.path:'<unmatched>';
+    const classification=error instanceof TypeError?'TypeError':error instanceof Error?'Error':'UnknownError';
+    console.error('Astana request failed',`${req.method} ${req.baseUrl}${route} (${classification})`);
    res.status(500).json({message:'Unable to save or load right now. Please retry; your form is still here.'});
   }
  };
@@ -45,6 +47,17 @@ export function createAstanaRouter({store,requireAdmin,broadcast}:{store:AstanaS
  router.post('/recover',run(async(req,res)=>{
   limit(`recover:${req.ip}`,30);const {token}=z.object({token:z.string().regex(/^[a-f0-9]{64}$/)}).parse(req.body);const result=await store.recover(token);res.cookie('astanaSession',result.token,cookieOptions);res.json(result.me);
  }));
+  router.post('/device-code',run(async(req,res)=>{
+   limit(`device-code-ip:${req.ip}`,20);
+   const session=guest(req);
+   if(session)limit(`device-code-session:${createHash('sha256').update(session).digest('hex')}`,10);
+   res.json(await store.issueDeviceCode(session));
+  }));
+  router.post('/device-login',run(async(req,res)=>{
+   limit(`device-login:${req.ip}`,12);
+   const result=await store.redeemDeviceCode(req.body);
+   res.cookie('astanaSession',result.token,cookieOptions);res.json(result.me);
+  }));
  router.get('/projects',run(async(_req,res)=>res.json(await store.listProjects())));
  router.put('/project',run(async(req,res)=>{limit(`project:${guest(req)}`,30);const input=projectSchema.extend({teamId:uuid}).parse(req.body);res.json(await store.saveProject(guest(req),input,input.teamId));broadcast({type:'astana_update'});}));
  router.post('/visitor',run(async(req,res)=>{limit(`visitor:${req.ip}`,2000);const value=await store.ensureVisitor(visitor(req));res.cookie('astanaVisitor',value,cookieOptions);res.sendStatus(204);}));

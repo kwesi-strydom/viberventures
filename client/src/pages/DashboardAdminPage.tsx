@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { queryClient, apiRequest } from '@/lib/queryClient';
 import { Link } from 'react-router-dom';
 import {
-  Play, Pause, RotateCcw, Square, Shield,
+  Play, RotateCcw, Square, Shield,
   Zap, Target, Megaphone, ExternalLink, Check,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -19,6 +19,19 @@ const CHALLENGE_TYPES = [
   { value: 'custom', label: 'Custom' },
 ];
 
+const MAX_TIMER_MINUTES = 10080;
+
+function formatTimer(seconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const remainingSeconds = safeSeconds % 60;
+  const pad = (value: number) => value.toString().padStart(2, '0');
+  return hours > 0
+    ? `${pad(hours)}:${pad(minutes)}:${pad(remainingSeconds)}`
+    : `${pad(minutes)}:${pad(remainingSeconds)}`;
+}
+
 const DashboardAdminPage = () => {
   const { toast } = useToast();
   const { user, isLoading: authLoading } = useAuth();
@@ -28,12 +41,24 @@ const DashboardAdminPage = () => {
     refetchInterval: 15000,
   });
 
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, []);
+
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['/api/dashboard'] });
 
   const eventMut = useMutation({
     mutationFn: (body: Record<string, unknown>) => apiRequest('/api/admin/dashboard/event', { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: invalidate,
     onError: () => toast({ title: 'Action failed', variant: 'destructive' }),
+  });
+  const timerMut = useMutation({
+    mutationFn: (body: { action: 'start' | 'stop' | 'reset' | 'set-duration'; durationSeconds?: number }) =>
+      apiRequest('/api/admin/dashboard/timer', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: invalidate,
+    onError: (error: Error) => toast({ title: error.message || 'Timer action failed', variant: 'destructive' }),
   });
   const updateTeamMut = useMutation({
     mutationFn: (vars: { id: number; data: Partial<DashboardTeam> }) => apiRequest(`/api/admin/dashboard/teams/${vars.id}`, { method: 'PATCH', body: JSON.stringify(vars.data) }),
@@ -57,10 +82,6 @@ const DashboardAdminPage = () => {
     mutationFn: (body: Record<string, unknown>) => apiRequest('/api/admin/dashboard/feed', { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => { invalidate(); toast({ title: 'Posted to feed' }); },
   });
-  const resetAllMut = useMutation({
-    mutationFn: () => apiRequest('/api/admin/dashboard/reset-all', { method: 'POST' }),
-    onSuccess: () => { invalidate(); toast({ title: 'Dashboard reset' }); },
-  });
   const resetChallengesMut = useMutation({
     mutationFn: () => apiRequest('/api/admin/dashboard/clear-outcomes', { method: 'POST' }),
     onSuccess: () => { invalidate(); toast({ title: 'All challenges reset' }); },
@@ -73,7 +94,7 @@ const DashboardAdminPage = () => {
   });
 
   // form state
-  const [durationMin, setDurationMin] = useState(60);
+  const [durationMin, setDurationMin] = useState('');
   const [challengeTeam, setChallengeTeam] = useState<number | ''>('');
   const [challengeType, setChallengeType] = useState('server_crash');
   const [challengeDur, setChallengeDur] = useState<number | ''>(120);
@@ -96,6 +117,27 @@ const DashboardAdminPage = () => {
   const event = data?.event;
   const teams = data?.teams ?? [];
   const activeEvents = (data?.events ?? []).filter((e) => e.active);
+  const timerElapsed = event
+    ? Math.max(0, Math.min(
+      event.accumulatedSeconds + (event.status === 'running' && event.startedAt
+        ? Math.floor((now - new Date(event.startedAt).getTime()) / 1000)
+        : 0),
+      event.durationSeconds,
+    ))
+    : 0;
+  const timerRemaining = event ? Math.max(0, event.durationSeconds - timerElapsed) : 0;
+  const timerExpired = !!event && event.status !== 'idle' && timerRemaining === 0;
+
+  const setTimerDuration = (minutes: number) => {
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > MAX_TIMER_MINUTES) {
+      toast({
+        title: `Enter a whole number from 1 to ${MAX_TIMER_MINUTES} minutes`,
+        variant: 'destructive',
+      });
+      return;
+    }
+    timerMut.mutate({ action: 'set-duration', durationSeconds: minutes * 60 });
+  };
 
   return (
     <div className="w-full max-w-[1100px] mx-auto px-4 py-6 flex flex-col gap-5">
@@ -132,37 +174,60 @@ const DashboardAdminPage = () => {
         </div>
       </section>
 
-      {/* Timer */}
+      {/* Independent manual timer */}
       <section className="card p-5">
-        <h2 className="font-bold text-lg text-foreground mb-3">Event Timer</h2>
+        <div className="flex items-start justify-between flex-wrap gap-4">
+          <div>
+            <h2 className="font-bold text-lg text-foreground mb-1">Manual Timer</h2>
+            <p className="text-sm text-ink-300">Set any whole-minute duration, then start, stop, or reset the clock independently of the arena.</p>
+          </div>
+          <span className="mono-label">Status: {event?.status ?? 'loading'}</span>
+        </div>
+        <div className="my-5 flex items-center gap-5 flex-wrap">
+          <span className="font-mono text-4xl md:text-5xl font-bold tabular-nums text-foreground" role="timer" aria-label={`${timerRemaining} seconds remaining`}>
+            {formatTimer(timerRemaining)}
+          </span>
+          {event && <span className="text-sm text-ink-400">of {formatTimer(event.durationSeconds)}</span>}
+        </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <button className="btn btn-primary inline-flex items-center gap-2" onClick={() => eventMut.mutate({ action: 'start' })}><Play size={15} /> Start</button>
-          <button className="btn inline-flex items-center gap-2" onClick={() => eventMut.mutate({ action: 'pause' })}><Pause size={15} /> Pause</button>
-          <button className="btn inline-flex items-center gap-2" onClick={() => eventMut.mutate({ action: 'end' })}><Square size={15} /> End</button>
-          <button className="btn btn-ghost inline-flex items-center gap-2" title="Clock back to zero. Timeline and feed are kept."
-            onClick={() => { if (confirm('Reset the clock to zero? The timeline and live feed are kept — the competition keeps its history.')) eventMut.mutate({ action: 'reset' }); }}>
-            <RotateCcw size={15} /> Reset timer only
+          <button className="btn btn-primary inline-flex items-center gap-2"
+            disabled={!event || event.status === 'running' || timerExpired || timerMut.isPending}
+            onClick={() => timerMut.mutate({ action: 'start' })}>
+            <Play size={15} /> {event?.status === 'paused' ? 'Resume' : 'Start'}
           </button>
-          <button className="btn btn-ghost inline-flex items-center gap-2" title="Clock to zero + start running again, timeline and feed wiped."
-            onClick={() => { if (confirm('Restart the competition from the beginning? The clock restarts at zero and the timeline + live feed are wiped.')) eventMut.mutate({ action: 'restart' }); }}>
-            <Play size={15} /> Restart competition
+          <button className="btn inline-flex items-center gap-2"
+            disabled={!event || event.status !== 'running' || timerMut.isPending}
+            onClick={() => timerMut.mutate({ action: 'stop' })}>
+            <Square size={15} /> Stop
           </button>
-          <span className="mono-label ml-auto">Status: {event?.status ?? '-'}</span>
+          <button className="btn btn-ghost inline-flex items-center gap-2"
+            disabled={!event || timerMut.isPending} title="Return the timer to zero. This changes only the timer."
+            onClick={() => timerMut.mutate({ action: 'reset' })}>
+            <RotateCcw size={15} /> Reset
+          </button>
         </div>
-        <div className="flex items-center gap-2 mt-4 flex-wrap">
-          <label className="text-sm text-ink-300">Timer length</label>
-          {[10, 30, 60].map((m) => (
-            <button key={m}
-              className={`btn ${event && event.durationSeconds === m * 60 ? 'btn-primary' : 'btn-ghost'}`}
-              onClick={() => { setDurationMin(m); eventMut.mutate({ action: 'set-duration', durationSeconds: m * 60 }); }}>
-              {m} min
+        {timerExpired && <p className="text-xs text-ink-400 mt-2" role="status">The timer is at zero. Press Reset before starting another countdown.</p>}
+        <div className="mt-5 border-t border-ink-600 pt-4">
+          <p className="text-sm text-ink-300 mb-2">Set duration</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            {[60, 10, 5].map((minutes) => (
+              <button key={minutes} className={`btn ${event?.durationSeconds === minutes * 60 ? 'btn-primary' : 'btn-ghost'}`}
+                disabled={timerMut.isPending} onClick={() => setTimerDuration(minutes)}>
+                {minutes} min
+              </button>
+            ))}
+            <label className="sr-only" htmlFor="manual-timer-minutes">Custom duration in minutes</label>
+            <input id="manual-timer-minutes" type="number" min={1} max={MAX_TIMER_MINUTES} step={1}
+              value={durationMin || String(Math.round((event?.durationSeconds ?? 3600) / 60))}
+              onChange={(e) => setDurationMin(e.target.value)}
+              className="w-28 bg-ink-800 border border-ink-600 rounded-sm px-2 py-2 text-foreground" />
+            <button className="btn btn-ghost" disabled={timerMut.isPending}
+              onClick={() => setTimerDuration(Number(durationMin || Math.round((event?.durationSeconds ?? 3600) / 60)))}>
+              Set minutes
             </button>
-          ))}
-          <input type="number" min={1} max={1440} value={durationMin} onChange={(e) => setDurationMin(parseInt(e.target.value) || 0)}
-            className="w-24 bg-ink-800 border border-ink-600 rounded-sm px-2 py-1 text-foreground" />
-          <button className="btn btn-ghost" onClick={() => eventMut.mutate({ action: 'set-duration', durationSeconds: durationMin * 60 })}>Set custom (min)</button>
+          </div>
+          <p className="text-xs text-ink-400 mt-2">Use any whole number from 1 to {MAX_TIMER_MINUTES} minutes. Stopping preserves the remaining time; Reset only resets this clock.</p>
         </div>
-        <p className="text-xs text-ink-400 mt-2">You can change the length at any moment — even mid-battle. Perfect for 10-minute stints.</p>
       </section>
 
       {/* Teams */}
@@ -280,22 +345,16 @@ const DashboardAdminPage = () => {
         </div>
       </section>
 
-      {/* Clean slate */}
-      <section className="card p-5 border-[color:var(--accent)]/40">
-        <h2 className="font-bold text-lg text-foreground mb-1 flex items-center gap-2"><RotateCcw size={18} className="text-[color:var(--accent)]" /> Clean slate</h2>
+      {/* Board history controls are deliberately separate from the manual timer. */}
+      <section className="card p-5">
+        <h2 className="font-bold text-lg text-foreground mb-1 flex items-center gap-2"><RotateCcw size={18} className="text-[color:var(--accent)]" /> Board history</h2>
         <p className="text-sm text-ink-300 mb-3">
-          One button to wipe the timeline and every live-feed event for a brand-new competition.
-          <span className="text-foreground"> "Clear timeline &amp; feed"</span> keeps the clock as-is;
-          <span className="text-foreground"> "Reset everything"</span> also puts the timer back to zero.
+          Clear challenge and feed history only when needed. This action does not change the timer, duration, or linked roster.
         </p>
         <div className="flex items-center gap-2 flex-wrap">
           <button className="btn btn-primary inline-flex items-center gap-2" disabled={resetChallengesMut.isPending}
-            onClick={() => { if (confirm('Wipe all challenges, side quests and live-feed events? The timer keeps running.')) resetChallengesMut.mutate(); }}>
+            onClick={() => { if (confirm('Clear all challenges, side quests, and feed events? The timer, duration, and roster will not change.')) resetChallengesMut.mutate(); }}>
             <RotateCcw size={15} /> Clear timeline &amp; feed
-          </button>
-          <button className="btn btn-ghost inline-flex items-center gap-2" disabled={resetAllMut.isPending}
-            onClick={() => { if (confirm('Full clean slate: timer to zero, timeline and feed wiped. Ready for a new competition?')) resetAllMut.mutate(); }}>
-            <RotateCcw size={15} /> Reset everything
           </button>
         </div>
       </section>

@@ -14,3 +14,5 @@
 - [GitHub history alignment](github-push-viberventures.md) — remote main has a clean snapshot lineage; compare trees and back up old local history before syncing.
 - [Astana team reveal](astana-team-reveal.md) — animate builder cards, but only reveal teams returned by Astana's successful server-side draw.
 - [Astana rating parity](astana-rating-parity.md) — show VIBER-style half-star averages, but submit only whole-number Astana votes.
+- [Astana device access](astana-device-access.md) — phone-generated device codes add sessions; organizer recovery revokes them; name/email alone never prove identity.
+- [Wheel round durability](wheel-round-durability.md) — persist the next round with outcomes; safe rounds cannot be reconstructed by counting timeline entries.

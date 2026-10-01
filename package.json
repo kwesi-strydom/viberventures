@@ -10,6 +10,8 @@
     "check": "tsc",
     "db:push": "drizzle-kit push",
     "test:astana": "node --import tsx --test server/astana/*.test.ts",
+    "test:event-reliability": "node --import tsx --test server/async-handler.test.ts server/dashboard-timer.test.ts server/wheel-progress.test.ts server/wheel-dispute-atomicity.test.ts server/astana/*.test.ts client/src/lib/wheel-dispute.test.ts",
+    "db:event-reliability": "node scripts/migrate-event-reliability.mjs",
     "db:astana": "node scripts/migrate-astana.mjs"
   },
   "dependencies": {

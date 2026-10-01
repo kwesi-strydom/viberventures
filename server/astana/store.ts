@@ -1,10 +1,17 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { ASTANA_SLUG, joinSchema, projectSchema, type AdminState, type AstanaEvent, type EventTeam, type Guest, type Me, type Project, type ProjectInput, type Winners } from '../../shared/astana';
+import { ASTANA_SLUG, deviceCodeSchema, joinSchema, projectSchema, type AdminState, type AstanaEvent, type EventTeam, type Guest, type Me, type Project, type ProjectInput, type Winners } from '../../shared/astana';
 import { AstanaError, makeTeams } from './domain';
 export interface Sql {query(sql:string,values?:unknown[]):Promise<any[]>;}
 export interface Database extends Sql {transaction<T>(fn:(tx:Sql)=>Promise<T>):Promise<T>;}
 const hash=(token:string)=>createHash('sha256').update(token).digest('hex');
 const token=()=>randomBytes(32).toString('hex');
+const deviceCode=()=>{
+ // Sixteen symbols from a 32-character alphabet provide 80 random bits.
+ const alphabet='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+ return [...randomBytes(16)].map(byte=>alphabet[byte&31]).join('');
+};
+const formatDeviceCode=(value:string)=>value.match(/.{4}/g)!.join('-');
+const invalidDeviceCode=()=>new AstanaError(400,'That sign-in code is invalid or expired. Generate a new code from your signed-in device or ask the organizer to restore your access.');
 const guestDTO=(g:any):Guest=>({id:g.id,name:g.name,teamId:g.team_id});
 const empty:Me={guest:null,team:null,project:null};
 export class AstanaStore {
@@ -28,7 +35,7 @@ export class AstanaStore {
   const value=await this.locked(async(tx,eventId)=>{
    const existing=await this.session(tx,sessionToken);
    if(existing){if(existing.email!==input.email)throw new AstanaError(409,'This browser is already checked in. Ask the organizer before changing participant.');return sessionToken!;}
-   if((await tx.query('SELECT id FROM astana_guests WHERE event_id=$1 AND email=$2',[eventId,input.email])).length)throw new AstanaError(409,'This email is already registered. Use your original browser or ask the organizer to restore access.');
+    if((await tx.query('SELECT id FROM astana_guests WHERE event_id=$1 AND email=$2',[eventId,input.email])).length)throw new AstanaError(409,'This email is already registered. Use the sign-in code form on this page, or ask the organizer to verify you and restore access if you cannot reach your signed-in device.');
    const id=randomUUID();await tx.query('INSERT INTO astana_guests(id,event_id,name,email) VALUES($1,$2,$3,$4)',[id,eventId,input.name,input.email]);
    await tx.query('UPDATE astana_event_state SET roster_revision=roster_revision+1 WHERE event_id=$1',[eventId]);return this.newSession(tx,id);
   });
@@ -55,9 +62,37 @@ export class AstanaStore {
    const [r]=await tx.query(`SELECT r.guest_id FROM astana_recovery_tokens r JOIN astana_guests g ON g.id=r.guest_id WHERE r.token_hash=$1 AND r.expires_at>now() AND r.consumed_at IS NULL AND g.event_id=$2 FOR UPDATE OF r`,[hash(value),eventId]);
    if(!r)throw new AstanaError(400,'Recovery link expired or already used. Ask the organizer for a new one.');
    await tx.query('UPDATE astana_recovery_tokens SET consumed_at=now() WHERE token_hash=$1',[hash(value)]);
+    await tx.query('UPDATE astana_device_codes SET consumed_at=COALESCE(consumed_at,now()) WHERE guest_id=$1 AND consumed_at IS NULL',[r.guest_id]);
    await tx.query('DELETE FROM astana_sessions WHERE guest_id=$1',[r.guest_id]);return this.newSession(tx,r.guest_id);
   });return {token:session,me:await this.getMe(session)};
  }
+  async issueDeviceCode(sessionToken:string|null|undefined):Promise<{code:string;expiresAt:string}>{
+   const value=deviceCode();
+   return this.locked(async(tx,eventId)=>{
+    const guest=await this.requireGuest(tx,sessionToken);
+    const [recent]=await tx.query("SELECT count(*)::int AS n FROM astana_device_codes WHERE guest_id=$1 AND created_at>now()-interval '15 minutes'",[guest.id]);
+    if(recent.n>=5)throw new AstanaError(429,'Too many sign-in codes were created. Please wait 15 minutes before generating another.');
+    await tx.query('UPDATE astana_device_codes SET consumed_at=COALESCE(consumed_at,now()) WHERE guest_id=$1 AND consumed_at IS NULL',[guest.id]);
+    const [created]=await tx.query("INSERT INTO astana_device_codes(token_hash,guest_id,expires_at) VALUES($1,$2,now()+interval '10 minutes') RETURNING expires_at",[hash(value),guest.id]);
+    return {code:formatDeviceCode(value),expiresAt:new Date(created.expires_at).toISOString()};
+   });
+  }
+  async redeemDeviceCode(raw:unknown):Promise<{token:string;me:Me}>{
+   const {code}=deviceCodeSchema.parse(raw);
+   const session=await this.locked(async(tx,eventId)=>{
+    const [found]=await tx.query(`SELECT d.guest_id FROM astana_device_codes d
+      JOIN astana_guests g ON g.id=d.guest_id
+      WHERE d.token_hash=$1 AND d.expires_at>now() AND d.consumed_at IS NULL AND g.event_id=$2
+      FOR UPDATE OF d`,[hash(code),eventId]);
+    if(!found)throw invalidDeviceCode();
+    const consumed=await tx.query(`UPDATE astana_device_codes SET consumed_at=now()
+      WHERE token_hash=$1 AND expires_at>now() AND consumed_at IS NULL RETURNING guest_id`,[hash(code)]);
+    if(!consumed.length)throw invalidDeviceCode();
+    // Pairing adds a session; it deliberately does not revoke the source device.
+    return this.newSession(tx,found.guest_id);
+   });
+   return {token:session,me:await this.getMe(session)};
+  }
  async assignTeams(revision:number){await this.locked(async(tx,eventId,state)=>{
   this.checkRevision(state.roster_revision,revision);
   if((await tx.query('SELECT id FROM astana_projects WHERE event_id=$1 LIMIT 1',[eventId])).length)throw new AstanaError(409,'Projects have been submitted. Move or swap members instead of reshuffling.');
@@ -77,14 +112,23 @@ export class AstanaStore {
   else {teamId=randomUUID();const [count]=await tx.query('SELECT count(*)::int AS n FROM astana_teams WHERE event_id=$1',[eventId]);await tx.query('INSERT INTO astana_teams VALUES($1,$2,$3)',[teamId,eventId,`Astana Team ${count.n+1}`]);}
   await tx.query('UPDATE astana_guests SET team_id=$1 WHERE id=$2',[teamId,id]);await tx.query('UPDATE astana_event_state SET roster_revision=roster_revision+1 WHERE event_id=$1',[eventId]);
  });return this.getAdminState();}
- async rotateGuests(ids:string[],revision:number){await this.locked(async(tx,eventId,state)=>{
-  this.checkRevision(state.roster_revision,revision);
-  if(ids.length<2||ids.length>3||new Set(ids).size!==ids.length)throw new AstanaError(400,'Choose two or three distinct participants from distinct teams.');
-  const members=[];for(const id of ids){const [g]=await tx.query('SELECT id,team_id FROM astana_guests WHERE id=$1 AND event_id=$2',[id,eventId]);if(!g?.team_id)throw new AstanaError(400,'Every selected participant must belong to this event and a team.');members.push(g);}
-  if(new Set(members.map(g=>g.team_id)).size!==members.length)throw new AstanaError(400,'Choose participants from distinct teams.');
-  for(let i=0;i<members.length;i++)await tx.query('UPDATE astana_guests SET team_id=$1 WHERE id=$2',[members[(i+1)%members.length].team_id,members[i].id]);
-  await tx.query('UPDATE astana_event_state SET roster_revision=roster_revision+1 WHERE event_id=$1',[eventId]);
- });return this.getAdminState();}
+  private async rotateGuestsInLockedTransaction(tx:Sql,eventId:number,state:any,ids:string[],revision:number,expectedTeamNames?:string[]){
+   this.checkRevision(state.roster_revision,revision);
+   if(ids.length<2||ids.length>3||new Set(ids).size!==ids.length)throw new AstanaError(400,'Choose two or three distinct participants from distinct teams.');
+   const members=[];for(const id of ids){const [g]=await tx.query('SELECT g.id,g.team_id,t.name AS team_name FROM astana_guests g LEFT JOIN astana_teams t ON t.id=g.team_id AND t.event_id=g.event_id WHERE g.id=$1 AND g.event_id=$2 FOR UPDATE OF g',[id,eventId]);if(!g?.team_id||!g.team_name)throw new AstanaError(400,'Every selected participant must belong to this event and a team.');members.push(g);}
+   if(new Set(members.map(g=>g.team_id)).size!==members.length)throw new AstanaError(400,'Choose participants from distinct teams.');
+   if(expectedTeamNames&&members.some((member,index)=>member.team_name!==expectedTeamNames[index]))throw new AstanaError(409,'The selected participants no longer match the teams affected by this dispute.');
+   for(let i=0;i<members.length;i++)await tx.query('UPDATE astana_guests SET team_id=$1 WHERE id=$2',[members[(i+1)%members.length].team_id,members[i].id]);
+   await tx.query('UPDATE astana_event_state SET roster_revision=roster_revision+1 WHERE event_id=$1',[eventId]);
+  }
+  async rotateGuestsInTransaction(tx:Sql,ids:string[],revision:number,expectedEventId:number,expectedTeamNames:string[]){
+   const event=await this.getEvent(tx);
+   if(event.id!==expectedEventId)throw new AstanaError(409,'The Astana event changed before this dispute could be resolved.');
+   const [state]=await tx.query('SELECT * FROM astana_event_state WHERE event_id=$1 FOR UPDATE',[event.id]);
+   if(!state)throw new AstanaError(503,'Astana roster state is unavailable.');
+   await this.rotateGuestsInLockedTransaction(tx,event.id,state,ids,revision,expectedTeamNames);
+  }
+  async rotateGuests(ids:string[],revision:number){await this.locked(async(tx,eventId,state)=>this.rotateGuestsInLockedTransaction(tx,eventId,state,ids,revision));return this.getAdminState();}
  async listProjects(q:Sql=this.db):Promise<Project[]>{
   const e=await this.getEvent(q);const rows=await q.query(`SELECT p.*,t.name AS team_name,COALESCE(avg(r.rating),0)::float8 AS average_rating,count(r.rating)::int AS rating_count FROM astana_projects p JOIN astana_teams t ON t.id=p.team_id LEFT JOIN astana_ratings r ON r.project_id=p.id WHERE p.event_id=$1 GROUP BY p.id,t.name ORDER BY p.created_at,p.id`,[e.id]);
   return rows.map(p=>({id:p.id,teamId:p.team_id,teamName:p.team_name,title:p.title,description:p.description,appUrl:p.app_url,thumbnailUrl:p.thumbnail_url,socialUrl:p.social_url,revision:p.revision,averageRating:Number(p.average_rating),ratingCount:Number(p.rating_count)}));

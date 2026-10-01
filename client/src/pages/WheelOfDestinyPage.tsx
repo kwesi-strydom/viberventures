@@ -4,11 +4,53 @@ import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ChevronLeft, Users, ServerOff, Scale, ShieldCheck, AlertTriangle } from 'lucide-react';
-import { apiRequest, queryClient } from '@/lib/queryClient';
+import { queryClient } from '@/lib/queryClient';
+import {
+  canStartWheelSpin,
+  reduceWheelDispute,
+  sameWheelDispute,
+  wheelDisputeIdentity,
+  wheelDisputeMatchesContext,
+  type PendingWheelDispute,
+  type WheelDisputeAction,
+  type WheelDisputeContext,
+  type WheelDisputeSnapshot,
+} from '@/lib/wheel-dispute';
 import type { User } from '@shared/schema';
-import { CURRENT_EDITION, type DashboardSnapshot } from '@shared/schema';
+import type { DashboardSnapshot } from '@shared/schema';
 
 type SafeUser = Omit<User, 'password'>;
+type WheelProgress = {
+  linkedEventId: number | null;
+  generation: number;
+  nextOrdinal: number;
+  pendingDispute: WheelDisputeSnapshot | null;
+};
+type WheelSpinRequest = Omit<WheelProgress, 'pendingDispute'> & { requestId: string; teamNames: string[] };
+
+class WheelApiError extends Error {
+  constructor(message: string, readonly status: number, readonly responseBody: any) {
+    super(message);
+    this.name = 'WheelApiError';
+  }
+}
+
+async function wheelApiRequest<T>(url: string, body?: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const responseBody = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new WheelApiError(
+      responseBody?.message ?? `Wheel request failed (${response.status})`,
+      response.status,
+      responseBody,
+    );
+  }
+  return responseBody as T;
+}
 
 const CALAMITIES = [
   { id: 'founders_dispute', name: 'Founders Dispute', icon: <Users size={40} />, color: 'var(--ink-000)', bg: 'var(--ink-850)', border: 'var(--warn)',
@@ -37,7 +79,10 @@ const WheelOfDestinyPage = () => {
   const [phase, setPhase] = useState<Phase>('idle');
   const [countdown, setCountdown] = useState(10);
   const [countdownKey, setCountdownKey] = useState(0);
-  const [spinNumber, setSpinNumber] = useState(0);
+  const [savingSpin, setSavingSpin] = useState(false);
+  const [resettingWheel, setResettingWheel] = useState(false);
+  const [wheelError, setWheelError] = useState('');
+  const [pendingSpin, setPendingSpin] = useState<WheelSpinRequest | null>(null);
   // Current spin result
   const [currentSpinSelected, setCurrentSpinSelected] = useState<string[]>([]);
   const [currentSpinEligible, setCurrentSpinEligible] = useState<string[]>([]);
@@ -45,39 +90,75 @@ const WheelOfDestinyPage = () => {
   const [wheelRotation, setWheelRotation] = useState(0);
   const [showPanel, setShowPanel] = useState(false);
 
-  const [showSwapModal, setShowSwapModal] = useState(false);
-  const [swapCountdown, setSwapCountdown] = useState(15);
-  const [selectedA, setSelectedA] = useState<number | null>(null);
-  const [selectedB, setSelectedB] = useState<number | null>(null);
-  const [selectedC, setSelectedC] = useState<number | null>(null);
+  const [pendingDispute, setPendingDispute] = useState<PendingWheelDispute | null>(null);
+  const [selectedDisputeUsers, setSelectedDisputeUsers] = useState<Record<string, number>>({});
 
   const audioCtxRef = useRef<AudioContext | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const swapTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isSpinningRef = useRef(false);
+  const pendingDisputeRef = useRef<PendingWheelDispute | null>(null);
+  const wheelContextRef = useRef<WheelDisputeContext | null>(null);
+
+  if (pendingDisputeRef.current !== pendingDispute) pendingDisputeRef.current = pendingDispute;
+
+  const dispatchWheelDispute = (action: WheelDisputeAction) => {
+    const next = reduceWheelDispute(pendingDisputeRef.current, action);
+    pendingDisputeRef.current = next;
+    setPendingDispute(next);
+    return next;
+  };
+
+  const clearWheelTransient = () => {
+    spinGeneration.current++;
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    if (swapTimerRef.current) clearInterval(swapTimerRef.current);
+    isSpinningRef.current = false;
+    wheelContextRef.current = null;
+    dispatchWheelDispute({ type: 'clear' });
+    setSelectedDisputeUsers({});
+    setPhase('idle');
+    setCurrentCalamityIdx(0);
+    setCurrentSpinSelected([]);
+    setCurrentSpinEligible([]);
+    setShowPanel(false);
+    setCountdown(10);
+    setPendingSpin(null);
+    setSavingSpin(false);
+  };
 
   const { data: currentUser } = useQuery<{ user: SafeUser }>({ queryKey: ['/api/auth/user'] });
   const { data: users = [], refetch: refetchUsers } = useQuery<SafeUser[]>({ queryKey: ['/api/admin/users'] });
-
-  const calamityMutation = useMutation({
-    mutationFn: (body: { teamNames: string[]; type: string; label: string }) =>
-      apiRequest('/api/admin/dashboard/calamity', { method: 'POST', body: JSON.stringify(body) }),
-    onError: () => toast({ title: 'Challenge was not saved', description: 'Retry the result below before spinning again.', variant: 'destructive' }),
+  const {
+    data: wheelProgress,
+    isLoading: wheelProgressLoading,
+    isFetching: wheelProgressFetching,
+    isError: wheelProgressFailed,
+    refetch: refetchWheelProgress,
+  } = useQuery<WheelProgress>({
+    queryKey: ['/api/admin/dashboard/wheel-progress'],
+    enabled: currentUser?.user?.isAdmin === true,
+    refetchInterval: 15000,
+    refetchIntervalInBackground: false,
   });
-
-  const clearOutcomesMutation = useMutation({
-    mutationFn: () => apiRequest('/api/admin/dashboard/clear-outcomes', { method: 'POST' }),
-  });
+  const spinNumber = wheelProgress?.nextOrdinal ?? 0;
 
   const rotateMutation = useMutation({
-    mutationFn: ({ userIdA, userIdB, userIdC }: { userIdA: number; userIdB: number; userIdC: number }) =>
-      apiRequest('/api/admin/rotate-members', { method: 'POST', body: JSON.stringify({ userIdA, userIdB, userIdC }) }),
-    onSuccess: () => {
+    mutationFn: (input: {
+      linkedEventId: number | null;
+      generation: number;
+      requestId: string;
+      rosterRevision: number;
+      userIds: number[];
+    }) => wheelApiRequest('/api/admin/dashboard/wheel-dispute/rotate', input),
+    onSuccess: (_data, input) => {
       queryClient.invalidateQueries({ queryKey: ['/api/admin/users'] });
       refetchUsers();
-      setShowSwapModal(false);
-      setSelectedA(null);
-      setSelectedB(null);
-      setSelectedC(null);
+      finishDispute(input);
+    },
+    onError: () => {
+      void refetchWheelProgress();
+      void queryClient.invalidateQueries({ queryKey: ['/api/dashboard'] });
     },
   });
 
@@ -87,16 +168,51 @@ const WheelOfDestinyPage = () => {
   const linkedEventRef = useRef<number | null | undefined>(undefined);
   const spinGeneration = useRef(0);
   useEffect(() => {
-    const id=dashboard?.linkedEvent?.id;
+    const id = dashboard?.event?.linkedEventId;
+    if (id === undefined) return;
     if(linkedEventRef.current !== undefined && linkedEventRef.current !== id){
-      spinGeneration.current++;
-      if(countdownRef.current)clearInterval(countdownRef.current);
-      if(swapTimerRef.current)clearInterval(swapTimerRef.current);
-      setShowSwapModal(false);setCurrentSpinSelected([]);setSelectedA(null);setSelectedB(null);setSelectedC(null);
-      setPhase('idle');setSpinNumber(0);setShowPanel(false);calamityMutation.reset();
+      clearWheelTransient();
+      setWheelError('');
+      void refetchWheelProgress();
     }
     linkedEventRef.current=id;
-  },[dashboard?.linkedEvent?.id]);
+  },[dashboard?.event?.linkedEventId, refetchWheelProgress]);
+  useEffect(() => {
+    const linkedEventId = dashboard?.event?.linkedEventId;
+    if (
+      linkedEventId === undefined ||
+      !wheelProgress ||
+      wheelProgress.linkedEventId !== linkedEventId
+    ) return;
+
+    const context: WheelDisputeContext = {
+      linkedEventId: wheelProgress.linkedEventId,
+      generation: wheelProgress.generation,
+    };
+    const previous = wheelContextRef.current;
+    const generationChanged = previous !== null && (
+      previous.linkedEventId !== context.linkedEventId ||
+      previous.generation !== context.generation
+    );
+    if (generationChanged) {
+      clearWheelTransient();
+      setWheelError('');
+    }
+    wheelContextRef.current = context;
+
+    if (wheelProgress.pendingDispute) {
+      const dispute = dispatchWheelDispute({
+        type: 'restore',
+        dispute: wheelProgress.pendingDispute,
+        progress: wheelProgress,
+      });
+      if (dispute?.status === 'countdown') scheduleDisputeCountdown(dispute);
+    } else if (pendingDisputeRef.current) {
+      dispatchWheelDispute({ type: 'invalidate', context: null });
+      setSelectedDisputeUsers({});
+      if (swapTimerRef.current) clearInterval(swapTimerRef.current);
+    }
+  }, [dashboard?.event?.linkedEventId, wheelProgress?.linkedEventId, wheelProgress?.generation, wheelProgress?.pendingDispute]);
   const teams = (dashboard?.teams ?? []).map(t => t.name).sort((a, b) => {
     const na = parseInt(a.replace(/\D/g, '')) || 0;
     const nb = parseInt(b.replace(/\D/g, '')) || 0;
@@ -136,40 +252,114 @@ const WheelOfDestinyPage = () => {
     }
   };
 
-  const handleSpin = () => {
-    if (phase !== 'idle' || calamityMutation.isPending || calamityMutation.isError) return;
-    if (spinNumber >= CALAMITIES.length) return;
-    // No competitors yet — surface the empty state instead of a pointless spin.
-    if (teams.length === 0) {
-      setCurrentSpinSelected([]);
-      setCurrentSpinEligible([]);
-      setCurrentCalamityIdx(Math.min(spinNumber, CALAMITIES.length - 1));
-      setShowPanel(true);
-      return;
-    }
-    // Hide panel first, then start countdown
-    setShowPanel(false);
-    setCurrentSpinSelected([]);
-    setCurrentSpinEligible([]);
-    setPhase('countdown');
-    setCountdown(10);
-    setCountdownKey(k => k + 1);
+  const progressMatchesDashboard = Boolean(
+    wheelProgress && dashboard?.event && wheelProgress.linkedEventId === dashboard.event.linkedEventId,
+  );
 
-    let count = 10;
-    countdownRef.current = setInterval(() => {
-      count--;
-      setCountdown(count);
-      setCountdownKey(k => k + 1);
-      if (count <= 5 && count > 0) playBeep(count <= 2 ? 1320 : 880, 0.12);
-      if (count === 0) {
-        clearInterval(countdownRef.current!);
-        doSpin();
+  const scheduleDisputeCountdown = (dispute: PendingWheelDispute) => {
+    if (swapTimerRef.current) clearInterval(swapTimerRef.current);
+    if (dispute.status !== 'countdown') return;
+    const identity = wheelDisputeIdentity(dispute);
+    swapTimerRef.current = setInterval(() => {
+      const current = pendingDisputeRef.current;
+      const context = wheelContextRef.current;
+      if (
+        !current ||
+        !sameWheelDispute(current, identity) ||
+        !wheelDisputeMatchesContext(current, context) ||
+        current.status !== 'countdown'
+      ) {
+        if (swapTimerRef.current) clearInterval(swapTimerRef.current);
+        return;
+      }
+      const next = dispatchWheelDispute({ type: 'tick', identity, context: context! });
+      if (!next || next.status !== 'countdown') {
+        if (swapTimerRef.current) clearInterval(swapTimerRef.current);
       }
     }, 1000);
   };
 
-  const doSpin = () => {
-    const generation = spinGeneration.current;
+  const finishDispute = (identity: ReturnType<typeof wheelDisputeIdentity>) => {
+    dispatchWheelDispute({ type: 'resolve', identity });
+    setSelectedDisputeUsers({});
+    queryClient.setQueryData<WheelProgress>(
+      ['/api/admin/dashboard/wheel-progress'],
+      previous => previous ? { ...previous, pendingDispute: null } : previous,
+    );
+    void queryClient.invalidateQueries({ queryKey: ['/api/admin/dashboard/wheel-progress'] });
+  };
+
+  const saveWheelSpin = async (request: WheelSpinRequest, animationGeneration: number) => {
+    setSavingSpin(true);
+    setWheelError('');
+    try {
+      const result = await wheelApiRequest<{
+        progress: Omit<WheelProgress, 'pendingDispute'>;
+        status: 'committed' | 'replayed';
+        disputeResolved?: boolean;
+        pendingDispute: WheelDisputeSnapshot | null;
+      }>(
+        '/api/admin/dashboard/calamity',
+        request,
+      );
+      if (animationGeneration !== spinGeneration.current) return;
+      const resultProgress: WheelProgress = { ...result.progress, pendingDispute: result.pendingDispute };
+      queryClient.setQueryData(['/api/admin/dashboard/wheel-progress'], resultProgress);
+      setPendingSpin(null);
+      setWheelError('');
+      isSpinningRef.current = false;
+
+      // Open the Founders Dispute flow only after its result is committed.
+      if (request.nextOrdinal === 0) {
+        const dispute = result.pendingDispute
+          ? dispatchWheelDispute({
+              type: 'restore',
+              dispute: result.pendingDispute,
+              progress: result.progress,
+            })
+          : dispatchWheelDispute({
+              type: 'committed',
+              request,
+              resultStatus: result.status,
+              progress: result.progress,
+              disputeResolved: result.disputeResolved,
+            });
+        if (
+          dispute &&
+          wheelDisputeMatchesContext(dispute, wheelContextRef.current)
+        ) scheduleDisputeCountdown(dispute);
+      }
+    } catch (error) {
+      if (animationGeneration !== spinGeneration.current) return;
+      const failure = error instanceof WheelApiError ? error : null;
+      const message = failure?.message ?? 'The wheel result could not be saved. Retry the same result before spinning again.';
+      if (failure?.status === 409) {
+        const latestProgress = failure.responseBody?.progress as Omit<WheelProgress, 'pendingDispute'> | undefined;
+        if (latestProgress) {
+          queryClient.setQueryData(['/api/admin/dashboard/wheel-progress'], {
+            ...latestProgress,
+            pendingDispute: failure.responseBody?.pendingDispute ?? null,
+          });
+        }
+        else void refetchWheelProgress();
+        void queryClient.invalidateQueries({ queryKey: ['/api/dashboard'] });
+        setPendingSpin(null);
+        setShowPanel(false);
+        setCurrentSpinSelected([]);
+        setCurrentSpinEligible([]);
+        isSpinningRef.current = false;
+        setWheelError(message);
+      } else {
+        setWheelError(message);
+        toast({ title: 'Challenge was not saved', description: 'Retry this exact result before spinning again.', variant: 'destructive' });
+      }
+    } finally {
+      if (animationGeneration === spinGeneration.current) setSavingSpin(false);
+    }
+  };
+
+  const doSpin = (progress: WheelProgress) => {
+    const animationGeneration = spinGeneration.current;
     playSiren();
     setPhase('spinning');
 
@@ -177,7 +367,7 @@ const WheelOfDestinyPage = () => {
     // so a team can be struck by several calamities across spins.
     const eligible = teams;
     const n = teams.length;
-    const calamityIdx = spinNumber;
+    const calamityIdx = progress.nextOrdinal;
     let selected: string[];
 
     // Same random draw on every spin (including the final one) — a fresh shuffle
@@ -208,12 +398,20 @@ const WheelOfDestinyPage = () => {
       selected = shuffled.slice(0, 1);
     }
 
-    // Guard against blank picks (e.g. no teams), which would render a ghost row.
-    selected = selected.filter((t): t is string => Boolean(t && t.trim()));
-
+    selected = selected.filter((team): team is string => Boolean(team && team.trim()));
     setCurrentSpinSelected(selected);
     setCurrentSpinEligible(eligible);
     setCurrentCalamityIdx(calamityIdx);
+
+    const challenge = CALAMITIES[calamityIdx];
+    const request: WheelSpinRequest = {
+      linkedEventId: progress.linkedEventId,
+      generation: progress.generation,
+      nextOrdinal: calamityIdx,
+      requestId: crypto.randomUUID(),
+      teamNames: selected,
+    };
+    setPendingSpin(request);
 
     // Wheel rotation: land near first selected team (under top pointer)
     if (n > 0 && selected.length > 0) {
@@ -227,65 +425,142 @@ const WheelOfDestinyPage = () => {
     }
 
     setTimeout(() => {
-      if (generation !== spinGeneration.current) return;
-      setSpinNumber(prev => prev + 1);
+      if (animationGeneration !== spinGeneration.current) return;
       setPhase('result');
       setShowPanel(true);
-      setTimeout(() => setPhase('idle'), 800);
-
-      // Push the calamity to the live dashboard (challenge cards + feed).
-      if (selected.length > 0) {
-        calamityMutation.mutate({
-          teamNames: selected,
-          type: CALAMITIES[calamityIdx].id,
-          label: CALAMITIES[calamityIdx].name,
-        });
-      }
-
-      // Founders Dispute: open swap modal after 15s countdown
-      if (calamityIdx === 0 && selected.length >= 2) {
-        setSwapCountdown(15);
-        let t = 15;
-        swapTimerRef.current = setInterval(() => {
-          t--;
-          setSwapCountdown(t);
-          if (t <= 0) {
-            clearInterval(swapTimerRef.current!);
-            setShowSwapModal(true);
-          }
-        }, 1000);
-      }
+      setTimeout(() => {
+        if (animationGeneration === spinGeneration.current) setPhase('idle');
+      }, 800);
+      void saveWheelSpin(request, animationGeneration);
     }, 5000);
   };
 
-  const handleReset = () => {
-    if (!window.confirm('Reset the Wheel and clear all dashboard outcomes & live feed? This cannot be undone.')) return;
-    if (countdownRef.current) clearInterval(countdownRef.current);
-    if (swapTimerRef.current) clearInterval(swapTimerRef.current);
-    setShowSwapModal(false);
-    setSelectedA(null);
-    setSelectedB(null);
-    setPhase('idle');
-    setSpinNumber(0);
+  const handleSpin = () => {
+    if (
+      phase !== 'idle' || isSpinningRef.current || savingSpin || resettingWheel || pendingSpin ||
+      !canStartWheelSpin(Boolean(pendingDisputeRef.current)) ||
+      !progressMatchesDashboard || !wheelProgress || wheelProgressLoading || wheelProgressFetching ||
+      spinNumber >= CALAMITIES.length
+    ) return;
+
+    // No competitors yet — surface the empty state instead of a pointless spin.
+    if (teams.length === 0) {
+      setCurrentSpinSelected([]);
+      setCurrentSpinEligible([]);
+      setCurrentCalamityIdx(spinNumber);
+      setShowPanel(true);
+      return;
+    }
+
+    isSpinningRef.current = true;
+    setWheelError('');
+    setShowPanel(false);
     setCurrentSpinSelected([]);
     setCurrentSpinEligible([]);
-    setWheelRotation(0);
-    setShowPanel(false);
+    setPhase('countdown');
     setCountdown(10);
-    clearOutcomesMutation.mutate();
+    setCountdownKey(key => key + 1);
+
+    let count = 10;
+    countdownRef.current = setInterval(() => {
+      count--;
+      setCountdown(count);
+      setCountdownKey(key => key + 1);
+      if (count <= 5 && count > 0) playBeep(count <= 2 ? 1320 : 880, 0.12);
+      if (count === 0) {
+        if (countdownRef.current) clearInterval(countdownRef.current);
+        if (wheelProgress) doSpin(wheelProgress);
+      }
+    }, 1000);
   };
 
-  useEffect(() => () => { if (countdownRef.current) clearInterval(countdownRef.current); }, []);
+  const handleRetrySave = () => {
+    if (!pendingSpin || savingSpin) return;
+    isSpinningRef.current = true;
+    void saveWheelSpin(pendingSpin, spinGeneration.current);
+  };
+
+  const dismissDispute = (identity: ReturnType<typeof wheelDisputeIdentity>) => {
+    if (swapTimerRef.current) clearInterval(swapTimerRef.current);
+    const context = wheelContextRef.current;
+    if (context) dispatchWheelDispute({ type: 'dismiss', identity, context });
+  };
+
+  const reopenDispute = (identity: ReturnType<typeof wheelDisputeIdentity>) => {
+    const context = wheelContextRef.current;
+    if (context) dispatchWheelDispute({ type: 'open', identity, context });
+  };
+
+  const submitLegacyDispute = () => {
+    const dispute = pendingDisputeRef.current;
+    if (!dispute || dispute.status !== 'open') return;
+    const userIds = dispute.teamNames.map(teamName => selectedDisputeUsers[teamName]);
+    if (userIds.some(id => !id)) return;
+    rotateMutation.mutate({
+      ...wheelDisputeIdentity(dispute),
+      rosterRevision: 0,
+      userIds,
+    });
+  };
+
+  const clearWheelPresentation = () => {
+    clearWheelTransient();
+    setWheelRotation(0);
+  };
+
+  const handleReset = async () => {
+    if (savingSpin || resettingWheel || rotateMutation.isPending || phase !== 'idle') return;
+    if (!window.confirm('Reset only the Wheel of Destiny? This restarts its challenge order and removes wheel-generated outcomes. The timer, roster, launchpad, and other dashboard data will not change.')) return;
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    if (swapTimerRef.current) clearInterval(swapTimerRef.current);
+    setResettingWheel(true);
+    setWheelError('');
+    try {
+      const result = await wheelApiRequest<{ progress: Omit<WheelProgress, 'pendingDispute'> }>(
+        '/api/admin/dashboard/wheel-reset',
+      );
+      clearWheelPresentation();
+      queryClient.setQueryData(['/api/admin/dashboard/wheel-progress'], {
+        ...result.progress,
+        pendingDispute: null,
+      });
+      void queryClient.invalidateQueries({ queryKey: ['/api/dashboard'] });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not reset the Wheel of Destiny.';
+      setWheelError(message);
+      isSpinningRef.current = Boolean(pendingSpin);
+    } finally {
+      setResettingWheel(false);
+    }
+  };
+
+  const handleSpinRef = useRef(handleSpin);
+  handleSpinRef.current = handleSpin;
+  const handleResetRef = useRef(handleReset);
+  handleResetRef.current = handleReset;
+
+  useEffect(() => () => {
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    if (swapTimerRef.current) clearInterval(swapTimerRef.current);
+    spinGeneration.current++;
+  }, []);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (e.key === 's' || e.key === 'S') handleSpin();
-      if (e.key === 'r' || e.key === 'R') handleReset();
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (
+        event.repeat ||
+        (target instanceof HTMLElement && (
+          target.isContentEditable ||
+          ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(target.tagName)
+        ))
+      ) return;
+      if (event.key === 's' || event.key === 'S') handleSpinRef.current();
+      if (event.key === 'r' || event.key === 'R') void handleResetRef.current();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [phase, spinNumber, teams.length]);
+  }, []);
 
   // ── SVG wheel segments ──
   const n = teams.length;
@@ -344,9 +619,13 @@ const WheelOfDestinyPage = () => {
     );
   }
 
-  const upcomingCalamity = CALAMITIES[Math.min(spinNumber, CALAMITIES.length - 1)];
   const currentCalamity = CALAMITIES[currentCalamityIdx];
   const safeThisRound = currentSpinEligible.filter(t => !currentSpinSelected.includes(t));
+  const canStartSpin = phase === 'idle' && !isSpinningRef.current && !savingSpin &&
+    !resettingWheel && !pendingSpin && canStartWheelSpin(Boolean(pendingDispute)) &&
+    progressMatchesDashboard && !wheelProgressLoading &&
+    !wheelProgressFetching && Boolean(wheelProgress) && spinNumber < CALAMITIES.length;
+  const upcomingCalamity = spinNumber < CALAMITIES.length ? CALAMITIES[spinNumber] : null;
 
   return (
     <div className="min-h-[100dvh] bg-background text-foreground px-8 py-8 select-none overflow-hidden relative"
@@ -481,6 +760,55 @@ const WheelOfDestinyPage = () => {
             <span className="flex items-center gap-2"><kbd className="px-2 py-1 rounded bg-card border border-border text-foreground font-mono">S</kbd> Spin</span>
             <span className="flex items-center gap-2"><kbd className="px-2 py-1 rounded bg-card border border-border text-foreground font-mono">R</kbd> Reset</span>
           </div>
+          <div className="flex flex-wrap justify-center gap-3">
+            <button className="btn btn-primary" onClick={handleSpin} disabled={!canStartSpin}>
+              {wheelProgressLoading || wheelProgressFetching || !progressMatchesDashboard
+                ? 'Loading wheel…'
+                : pendingDispute
+                  ? 'Resolve Founders Dispute first'
+                : spinNumber >= CALAMITIES.length
+                  ? 'All challenges complete'
+                  : phase === 'countdown' || phase === 'spinning'
+                    ? 'Wheel in motion…'
+                    : savingSpin
+                      ? 'Saving result…'
+                      : 'Spin the Wheel'}
+            </button>
+            <button className="btn btn-ghost" onClick={() => void handleReset()}
+              disabled={savingSpin || resettingWheel || rotateMutation.isPending || phase !== 'idle'}>
+              {resettingWheel ? 'Resetting…' : 'Reset Wheel'}
+            </button>
+          </div>
+          {pendingDispute && (
+            <div className="panel max-w-xl p-4 border border-warn text-center">
+              <p className="font-bold text-warn">Founders Dispute unresolved</p>
+              <p className="mono-label text-muted-foreground mt-1">
+                {pendingDispute.status === 'countdown'
+                  ? `Rotation opens in ${pendingDispute.countdownRemaining}s.`
+                  : 'Resolve this committed result before spinning again.'}
+              </p>
+              {pendingDispute.status !== 'open' && (
+                <button
+                  className="btn btn-sm mt-3"
+                  disabled={pendingDispute.status === 'countdown'}
+                  onClick={() => reopenDispute(wheelDisputeIdentity(pendingDispute))}
+                >
+                  Open Founders Dispute
+                </button>
+              )}
+            </div>
+          )}
+          <p className="mono-label text-center" aria-live="polite">
+            {spinNumber < CALAMITIES.length
+              ? `Challenge ${spinNumber + 1} of ${CALAMITIES.length}: ${upcomingCalamity?.name}`
+              : `All ${CALAMITIES.length} challenges complete`}
+          </p>
+          {wheelProgressFailed && (
+            <div role="alert" className="text-sm text-neg text-center">
+              Wheel progress could not be loaded.
+              <button className="btn btn-sm ml-2" onClick={() => void refetchWheelProgress()}>Retry</button>
+            </div>
+          )}
         </div>
 
         {/* ── Result panel ── */}
@@ -563,24 +891,44 @@ const WheelOfDestinyPage = () => {
         </div>
       </div>
 
-      {calamityMutation.isError && <div role="alert" className="p-4 border border-red-500">The challenge was not saved. <button className="btn" disabled={calamityMutation.isPending} onClick={() => calamityMutation.variables && calamityMutation.mutate(calamityMutation.variables)}>Retry saving challenge</button></div>}
-      {/* ── Founders Dispute Rotate Modal ── */}
-      {showSwapModal && dashboard?.astanaTeams && <AstanaDisputeDialog key={dashboard.linkedEvent?.id} teamNames={currentSpinSelected} onClose={() => setShowSwapModal(false)} />}
-      {showSwapModal && !dashboard?.astanaTeams && (() => {
-        const teamA = currentSpinSelected[0];
-        const teamB = currentSpinSelected[1];
-        const teamC = currentSpinSelected[2];
-        const membersA = users.filter(u => u.teamName === teamA);
-        const membersB = users.filter(u => u.teamName === teamB);
-        const membersC = users.filter(u => u.teamName === teamC);
-        const canRotate = selectedA !== null && selectedB !== null && selectedC !== null;
-        const isPending = rotateMutation.isPending;
-
-        const slots = [
-          { label: teamA, members: membersA, selected: selectedA, setSelected: setSelectedA, arrow: `→ ${teamB}`, color: DISPUTE_COLORS[0] },
-          { label: teamB, members: membersB, selected: selectedB, setSelected: setSelectedB, arrow: `→ ${teamC}`, color: DISPUTE_COLORS[1] },
-          { label: teamC, members: membersC, selected: selectedC, setSelected: setSelectedC, arrow: `→ ${teamA}`, color: DISPUTE_COLORS[2] },
-        ];
+      {wheelError && (
+        <div role="alert" className="max-w-4xl mx-auto mt-8 p-4 border border-red-500 rounded-md flex flex-wrap items-center justify-between gap-4">
+          <p>{wheelError}</p>
+          {pendingSpin && (
+            <button className="btn btn-primary btn-sm" disabled={savingSpin || resettingWheel} onClick={handleRetrySave}>
+              {savingSpin ? 'Saving…' : 'Retry saving this result'}
+            </button>
+          )}
+          {resettingWheel && <span className="mono-label">Resetting…</span>}
+        </div>
+      )}
+      {/* The committed identity, rather than the mutable current-spin result,
+          owns this dialog until its generation is resolved or invalidated. */}
+      {pendingDispute?.status === 'open' && dashboard?.astanaTeams && (
+        <AstanaDisputeDialog
+          key={pendingDispute.requestId}
+          teamNames={[...pendingDispute.teamNames]}
+          identity={wheelDisputeIdentity(pendingDispute)}
+          onClose={() => dismissDispute(wheelDisputeIdentity(pendingDispute))}
+          onComplete={() => finishDispute(wheelDisputeIdentity(pendingDispute))}
+          onStale={() => {
+            void refetchWheelProgress();
+            void queryClient.invalidateQueries({ queryKey: ['/api/dashboard'] });
+          }}
+        />
+      )}
+      {pendingDispute?.status === 'open' && !dashboard?.astanaTeams && (() => {
+        const disputeTeams = [...pendingDispute.teamNames];
+        const slots = disputeTeams.map((teamName, index) => ({
+          label: teamName,
+          members: users.filter(user => user.teamName === teamName),
+          selected: selectedDisputeUsers[teamName],
+          arrow: `→ ${disputeTeams[(index + 1) % disputeTeams.length]}`,
+          color: DISPUTE_COLORS[index % DISPUTE_COLORS.length],
+        }));
+        const canRotate = disputeTeams.length >= 2 &&
+          disputeTeams.every(teamName => Boolean(selectedDisputeUsers[teamName]));
+        const identity = wheelDisputeIdentity(pendingDispute);
 
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center"
@@ -590,40 +938,45 @@ const WheelOfDestinyPage = () => {
                 <div className="flex justify-center mb-4 text-warn"><Users size={48}/></div>
                 <h2 className="display text-3xl text-warn mb-2">Founders Dispute</h2>
                 <p className="text-muted-foreground text-sm">
-                  Pick one person from each team, they rotate: <span className="text-foreground font-bold">{teamA} → {teamB} → {teamC} → {teamA}</span>
+                  Pick one person from each team, they rotate: <span className="text-foreground font-bold">{disputeTeams.map((team, index) => `${team} → ${disputeTeams[(index + 1) % disputeTeams.length]}`).join(' · ')}</span>
                 </p>
               </div>
 
-              <div className="grid grid-cols-3 gap-6 mb-8">
-                {slots.map(({ label, members, selected, setSelected, arrow, color }) => (
+              <div className={`${disputeTeams.length === 2 ? 'grid-cols-2' : 'grid-cols-3'} grid gap-6 mb-8`}>
+                {slots.map(({ label, members, selected, arrow, color }) => (
                   <div key={label}>
                     <div className="flex items-center justify-between mb-3">
                       <p className="mono-label font-bold" style={{ color }}>{label}</p>
                       <span className="mono-label" style={{ color }}>{arrow}</span>
                     </div>
                     <div className="space-y-2">
-                      {members.map(m => (
-                        <button key={m.id}
-                          onClick={() => setSelected(m.id === selected ? null : m.id)}
+                      {members.map(member => (
+                        <button key={member.id}
+                          onClick={() => setSelectedDisputeUsers(current => {
+                            const next = { ...current };
+                            if (next[label] === member.id) delete next[label];
+                            else next[label] = member.id;
+                            return next;
+                          })}
                           className="w-full text-left px-4 py-3 rounded-md transition-all font-bold text-sm flex items-center gap-3 border"
                           style={{
-                            background: selected === m.id ? color : 'var(--ink-850)',
-                            borderColor: selected === m.id ? color : 'var(--ink-600)',
-                            color: selected === m.id ? 'var(--ink-900)' : 'var(--ink-100)',
+                            background: selected === member.id ? color : 'var(--ink-850)',
+                            borderColor: selected === member.id ? color : 'var(--ink-600)',
+                            color: selected === member.id ? 'var(--ink-900)' : 'var(--ink-100)',
                           }}>
-                          {m.discordAvatar && m.discordId ? (
+                          {member.discordAvatar && member.discordId ? (
                             <img
-                              src={`https://cdn.discordapp.com/avatars/${m.discordId}/${m.discordAvatar}.png?size=64`}
-                              alt={m.name ?? ''}
+                              src={`https://cdn.discordapp.com/avatars/${member.discordId}/${member.discordAvatar}.png?size=64`}
+                              alt={member.name ?? ''}
                               className="w-8 h-8 rounded-sm object-cover flex-shrink-0"
                             />
                           ) : (
                             <div className="w-8 h-8 rounded-sm flex-shrink-0 flex items-center justify-center font-mono text-lg"
-                              style={{ background: selected === m.id ? 'var(--ink-900)' : 'var(--ink-700)', color: selected === m.id ? color : 'var(--ink-100)' }}>
-                              {(m.name ?? '?').charAt(0).toUpperCase()}
+                              style={{ background: selected === member.id ? 'var(--ink-900)' : 'var(--ink-700)', color: selected === member.id ? color : 'var(--ink-100)' }}>
+                              {(member.name ?? '?').charAt(0).toUpperCase()}
                             </div>
                           )}
-                          <span className="truncate">{m.name}</span>
+                          <span className="truncate">{member.name}</span>
                         </button>
                       ))}
                       {members.length === 0 && (
@@ -633,15 +986,20 @@ const WheelOfDestinyPage = () => {
                   </div>
                 ))}
               </div>
-
-              <button
-                onClick={() => rotateMutation.mutate({ userIdA: selectedA!, userIdB: selectedB!, userIdC: selectedC! })}
-                disabled={!canRotate || isPending}
-                className="btn w-full btn-lg border-none"
-                style={{ backgroundColor: canRotate ? 'var(--warn)' : 'var(--ink-700)', color: canRotate ? 'var(--ink-900)' : 'var(--ink-400)' }}
-              >
-                {isPending ? 'Rotating…' : 'Confirm Rotation'}
-              </button>
+              {rotateMutation.error instanceof Error && (
+                <p role="alert" className="text-neg mb-4">{rotateMutation.error.message}</p>
+              )}
+              <div className="flex gap-3">
+                <button
+                  onClick={submitLegacyDispute}
+                  disabled={!canRotate || rotateMutation.isPending}
+                  className="btn flex-1 btn-lg border-none"
+                  style={{ backgroundColor: canRotate ? 'var(--warn)' : 'var(--ink-700)', color: canRotate ? 'var(--ink-900)' : 'var(--ink-400)' }}
+                >
+                  {rotateMutation.isPending ? 'Rotating…' : 'Confirm Rotation'}
+                </button>
+                <button className="btn" disabled={rotateMutation.isPending} onClick={() => dismissDispute(identity)}>Close</button>
+              </div>
             </div>
           </div>
         );

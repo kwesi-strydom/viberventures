@@ -23,6 +23,15 @@ CREATE TABLE IF NOT EXISTS astana_sessions (
 CREATE TABLE IF NOT EXISTS astana_recovery_tokens (
  token_hash text PRIMARY KEY,guest_id uuid NOT NULL REFERENCES astana_guests(id),expires_at timestamptz NOT NULL,consumed_at timestamptz
 );
+-- Device pairing creates an additional session without invalidating the source device.
+CREATE TABLE IF NOT EXISTS astana_device_codes (
+ token_hash text PRIMARY KEY,
+ guest_id uuid NOT NULL REFERENCES astana_guests(id),
+ created_at timestamptz NOT NULL DEFAULT now(),
+ expires_at timestamptz NOT NULL,
+ consumed_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS astana_device_codes_guest_created ON astana_device_codes(guest_id,created_at);
 CREATE TABLE IF NOT EXISTS astana_projects (
  id uuid PRIMARY KEY,event_id integer NOT NULL REFERENCES events(id),team_id uuid NOT NULL UNIQUE,
  title text NOT NULL,description text NOT NULL DEFAULT '',app_url text NOT NULL,thumbnail_url text NOT NULL,social_url text,

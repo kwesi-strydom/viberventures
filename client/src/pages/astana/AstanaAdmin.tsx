@@ -67,11 +67,7 @@ export default function AstanaAdmin() {
         method: 'POST',
         body: JSON.stringify({ action: 'set-event', eventId: admin.data!.eventId }),
       });
-      await apiRequest('/api/admin/dashboard/event', {
-        method: 'POST',
-        body: JSON.stringify({ action: 'set-duration', durationSeconds: 3600 }),
-      });
-      setMessage('Arena connected to Astana. Open the timer controls when the room is ready.');
+      setMessage('Astana roster connected. The timer was not changed.');
     } catch {
       setError('Could not connect the arena. Check the dashboard controls and retry.');
     } finally {
@@ -113,14 +109,14 @@ export default function AstanaAdmin() {
                 </section>
                 <section>
                   <h2>The live arena</h2>
-                  <p>Connect tonight’s roster and set the build clock to 60 minutes. Start it from the timer controls.</p>
+                  <p>Connect tonight’s roster to the live arena. Configure and start the optional manual timer separately.</p>
                   <div className="astana-actions">
                     <button className="btn btn-primary" disabled={busy} onClick={linkArena}>Connect Astana to the arena</button>
                     <Link className="btn" to="/admin/dashboard">Timer controls</Link>
                     <Link className="btn" to="/admin/wheel-of-destiny">Wheel of Destiny</Link>
                     <Link className="btn" to="/dashboard">Public arena</Link>
                   </div>
-                  <p className="astana-note">Spin at minutes 10, 20, 30, 40 and 50. At 60 minutes, stop building and begin the 60-second pitches.</p>
+                  <p className="astana-note">Use the Wheel of Destiny and timer controls whenever they suit the room. Connecting the roster does not start or reset the timer.</p>
                 </section>
               </div>
               <section className="astana-section">

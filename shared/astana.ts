@@ -3,9 +3,18 @@ export const ASTANA_SLUG = 'viber-astana';
 export const ASTANA_DATE = 'September 30, 2026';
 export const ASTANA_LOCATION = 'Nur Alem Pavilion · 5th floor · Network School';
 const webUrl = z.string().trim().max(2000).url().refine(value => {
-  const u = new URL(value); return ['https:','http:'].includes(u.protocol) && !u.username && !u.password;
+  try {
+    const u = new URL(value);
+    return ['https:','http:'].includes(u.protocol) && !u.username && !u.password;
+  } catch {
+    return false;
+  }
 }, 'Use a full http:// or https:// URL without a password.');
 export const joinSchema = z.object({name:z.string().trim().min(1).max(100),email:z.string().trim().toLowerCase().email().max(254),followConfirmed:z.literal(true)});
+export const deviceCodeSchema = z.object({
+  code: z.string().trim().toUpperCase().transform(value => value.replace(/[\s-]/g, ''))
+    .refine(value => value.length === 16 && /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{16}$/.test(value), 'Enter the 16-character code from your signed-in device.'),
+});
 export const projectSchema = z.object({title:z.string().trim().min(1).max(120),description:z.string().trim().max(500).default(''),appUrl:webUrl,thumbnailUrl:webUrl,socialUrl:z.union([webUrl,z.literal(''),z.null()]).transform(v=>v||null),revision:z.number().int().nonnegative()});
 export type ProjectInput = z.infer<typeof projectSchema>;
 export type Guest = {id:string;name:string;teamId:string|null};

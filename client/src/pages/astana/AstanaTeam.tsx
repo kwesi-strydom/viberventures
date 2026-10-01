@@ -1,6 +1,40 @@
-import {Link} from 'react-router-dom';
-import AstanaLayout,{LoadState} from '@/components/astana/AstanaLayout';
+import { Link } from 'react-router-dom';
+import AstanaLayout, { LoadState } from '@/components/astana/AstanaLayout';
+import DeviceCode from '@/components/astana/DeviceCode';
 import ProjectForm from '@/components/astana/ProjectForm';
-import {useAstana} from '@/hooks/useAstana';
-import type {Me} from '@shared/astana';
-export default function AstanaTeam(){const {data,isLoading,error}=useAstana<Me>('/me');return <AstanaLayout>{isLoading||error?<LoadState error={error}/>:!data?.guest?<div className="astana-empty"><h1>Join the draw.</h1><p className="astana-lead">Check in first to meet your teammates.</p><Link className="btn btn-primary mt-6" to="/astana/join">Check in</Link></div>:!data.team?<div className="astana-empty"><p className="astana-note mb-4">Checked in as {data.guest.name}</p><h1>You’re in.</h1><p className="astana-lead">The organizer will draw the teams shortly. Keep this page open—your team will appear here automatically.</p><Link to="/astana/launchpad" className="astana-link inline-block mt-8">Visit the launchpad</Link></div>:<><p className="astana-note mb-4">Welcome, {data.guest.name}</p><h1>{data.team.name}</h1><div className="astana-members">{data.team.members.map(g=><span key={g.id}>{g.name}</span>)}</div><p className="astana-lead mb-8">One team. One app. Either teammate can share your creation here.</p><ProjectForm key={data.team.id} project={data.project} teamId={data.team.id}/></>}</AstanaLayout>;}
+import { useAstana } from '@/hooks/useAstana';
+import type { Me } from '@shared/astana';
+
+export default function AstanaTeam() {
+  const { data, isLoading, error } = useAstana<Me>('/me');
+  return (
+    <AstanaLayout>
+      {isLoading || error ? <LoadState error={error} /> : !data?.guest ? (
+        <div className="astana-empty">
+          <h1>Join the draw.</h1>
+          <p className="astana-lead">Check in first to meet your teammates.</p>
+          <Link className="btn btn-primary mt-6" to="/astana/join">Check in</Link>
+        </div>
+      ) : !data.team ? (
+        <>
+          <div className="astana-empty">
+            <p className="astana-note mb-4">Checked in as {data.guest.name}</p>
+            <h1>You’re in.</h1>
+            <p className="astana-lead">The organizer will draw the teams shortly. Keep this page open—your team will appear here automatically.</p>
+            <Link to="/astana/launchpad" className="astana-link inline-block mt-8">Visit the launchpad</Link>
+          </div>
+          <DeviceCode />
+        </>
+      ) : (
+        <>
+          <p className="astana-note mb-4">Welcome, {data.guest.name}</p>
+          <h1>{data.team.name}</h1>
+          <div className="astana-members">{data.team.members.map(g => <span key={g.id}>{g.name}</span>)}</div>
+          <p className="astana-lead mb-8">One team. One app. Either teammate can share your creation here.</p>
+          <DeviceCode />
+          <ProjectForm key={data.team.id} project={data.project} teamId={data.team.id} />
+        </>
+      )}
+    </AstanaLayout>
+  );
+}
