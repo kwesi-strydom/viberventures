@@ -14,3 +14,9 @@ compare its tree with the remote snapshot's tree. If they match, preserve the ol
 branch under a backup ref, then align the checkout to fetched GitHub main. If they
 differ, reconcile the changes before moving branch pointers. Never force-push to
 solve a local checkout divergence.
+
+Command-line Git credentials and the managed GitHub connection are independent.
+
+**Why:** Git rejected the workspace's command-line credentials while the managed OAuth connection remained healthy and retained repository write access.
+
+**How to apply:** Do not reconnect a healthy integration solely because command-line Git authentication fails. Check the managed connection separately; any alternative upload must preserve commit history and update branch refs without forcing them.
